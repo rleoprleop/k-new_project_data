@@ -1,0 +1,60 @@
+\set ON_ERROR_STOP on
+\ir ../../db/schema/001_audit_landing_common.sql
+\ir ../../db/schema/020_dw_operations.sql
+\ir ../../db/schema/030_dw_personalization.sql
+\ir ../../db/schema/040_dm_operations.sql
+\ir ../../db/schema/050_dm_personalization.sql
+
+-- 이 문장은 데이터 트랜잭션 밖에서 실행한다. 이후 COPY나 DW/DM 생성이 롤백되어도
+-- RUNNING 이력이 남아 PowerShell 오류 처리기가 실패 상태로 변경할 수 있다.
+select audit.start_pipeline_run(:'source_set_checksum', :'reference_date'::date) as batch_id \gset
+
+begin;
+set local pipeline.batch_id = :'batch_id';
+
+set local pipeline.pseudonymization_key = :'pseudonymization_key';
+set local pipeline.reference_date = :'reference_date';
+
+\ir ../../db/load/010_load_landing_raw.psql
+\ir ../../db/quality/010_landing_raw.sql
+\ir ../../db/transform/common/010_load_master.sql
+
+-- 자식 DM을 먼저 비우고 해당 배치의 DW를 다시 구성한다.
+delete from dm_personalization.customer_usage_feature_snapshot
+    where source_batch_id=:'batch_id'::uuid;
+delete from dm_personalization.fact_customer_daily_usage
+    where source_batch_id=:'batch_id'::uuid;
+delete from dm_personalization.dim_customer where source_batch_id=:'batch_id'::uuid;
+delete from dm_operations.fact_daily_usage_summary
+    where source_batch_id=:'batch_id'::uuid;
+delete from dw_operations.user_discount where source_batch_id=:'batch_id'::uuid;
+delete from dw_operations.user_service where source_batch_id=:'batch_id'::uuid;
+delete from dw_operations.content_usage where source_batch_id=:'batch_id'::uuid;
+delete from dw_operations.bundle_composition where source_batch_id=:'batch_id'::uuid;
+delete from dw_operations.customer where source_batch_id=:'batch_id'::uuid;
+delete from dw_operations.family where source_batch_id=:'batch_id'::uuid;
+delete from dw_personalization.user_discount where source_batch_id=:'batch_id'::uuid;
+delete from dw_personalization.user_service where source_batch_id=:'batch_id'::uuid;
+delete from dw_personalization.content_usage where source_batch_id=:'batch_id'::uuid;
+delete from dw_personalization.bundle_composition
+    where source_batch_id=:'batch_id'::uuid;
+delete from dw_personalization.customer_identity_bridge
+    where source_batch_id=:'batch_id'::uuid;
+delete from dw_personalization.customer_profile
+    where source_batch_id=:'batch_id'::uuid;
+delete from dw_personalization.family where source_batch_id=:'batch_id'::uuid;
+
+\ir ../../db/transform/operations/dw/010_build.sql
+\ir ../../db/transform/personalization/dw/010_build.sql
+\ir ../../db/transform/operations/dm/010_build.sql
+\ir ../../db/transform/personalization/dm/010_build.sql
+
+\ir ../../db/quality/operations/dw/010_quality.sql
+\ir ../../db/quality/personalization/dw/010_quality.sql
+\ir ../../db/quality/operations/dm/010_quality.sql
+\ir ../../db/quality/personalization/dm/010_quality.sql
+
+update audit.pipeline_run set status='SUCCEEDED',ended_at=clock_timestamp(),error_message=null
+    where batch_id=:'batch_id'::uuid;
+commit;
+\echo pipeline batch :batch_id succeeded

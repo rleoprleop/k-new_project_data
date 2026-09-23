@@ -1,0 +1,8 @@
+# Generated data can be reproduced locally and is too large for routine commits.
+data/generated/*
+!data/generated/.gitkeep
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+.venv/
