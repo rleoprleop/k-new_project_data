@@ -48,7 +48,10 @@ n8n 운영 워크플로             n8n 요금제 추천 워크플로
    py -m venv .venv
    .\.venv\Scripts\Activate.ps1
    python -m pip install -r requirements.txt
-   python src/kt_synthetic_data_generator.py
+   python src/kt_synthetic_data_generator.py `
+     --reference-date 2026-09-29 `
+     --usage-through-date 2026-09-28 `
+     --content-usage-layout single
    python scripts/check_distribution.py
    cd ..
    ```
@@ -58,8 +61,13 @@ n8n 운영 워크플로             n8n 요금제 추천 워크플로
    ```powershell
    .\pipeline\scripts\run_pipeline.ps1 `
      -ConnectionString "postgresql://postgres:postgres@localhost:5432/kt_nd" `
+     -ReferenceDate "2026-09-29" `
      -AllowSyntheticDefaultKey
    ```
+
+위 빠른 시작은 단일 `content_usage.csv`를 사용하는 전체 파일 배치입니다. 대용량
+콘텐츠를 날짜별로 생성·적재할 때는 `--content-usage-layout daily`로 생성한 뒤
+증분 초기화와 일별 실행 경로를 사용합니다.
 
 자세한 입력 데이터·스키마·실행 조건은 [`generator/README.md`](generator/README.md), [`db/README.md`](db/README.md), [`pipeline/SQL_EXECUTION.md`](pipeline/SQL_EXECUTION.md)를 참고합니다.
 

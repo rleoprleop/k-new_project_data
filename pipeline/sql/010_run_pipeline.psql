@@ -5,6 +5,10 @@
 \ir ../../db/schema/040_dm_operations.sql
 \ir ../../db/schema/050_dm_personalization.sql
 
+-- 전체 교체와 일별 증분이 같은 DW/DM을 동시에 변경하지 못하게 한다.
+-- 오류로 psql 연결이 종료되면 세션 advisory lock은 PostgreSQL이 자동 해제한다.
+select pg_advisory_lock(hashtextextended('content_usage_daily',0));
+
 -- 이 문장은 데이터 트랜잭션 밖에서 실행한다. 이후 COPY나 DW/DM 생성이 롤백되어도
 -- RUNNING 이력이 남아 PowerShell 오류 처리기가 실패 상태로 변경할 수 있다.
 select audit.start_pipeline_run(:'source_set_checksum', :'reference_date'::date) as batch_id \gset
@@ -73,4 +77,5 @@ set last_successful_event_date=excluded.last_successful_event_date,
     last_successful_batch_id=excluded.last_successful_batch_id,
     updated_at=clock_timestamp();
 commit;
+select pg_advisory_unlock(hashtextextended('content_usage_daily',0));
 \echo pipeline batch :batch_id succeeded

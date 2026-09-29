@@ -24,14 +24,20 @@
 | 운영·개인화 DW/DM 변환 | [`db/transform/`](../db/transform/) |
 | 품질 검사 | [`db/quality/`](../db/quality/) |
 
-## 로컬 실행
+## 전체 파일 배치 실행
 
 PostgreSQL 15 이상, `psql`, `pgcrypto` 생성 권한과 DDL/DML 권한이 필요합니다. 저장소 루트에서 실행합니다.
+
+전체 파일 배치는 `generator/data/generated/` 바로 아래의 스냅샷 CSV 13개와 단일
+`content_usage.csv`를 한 트랜잭션에서 읽어 현재 DW/DM 상태를 전부 교체합니다.
+생성기는 `--content-usage-layout single` 또는 `both`로 실행해야 합니다. 날짜별
+파티션만 생성한 `daily` 결과에는 이 경로를 사용하지 않습니다.
 
 ```powershell
 $env:KT_ND_ANALYSIS_PSEUDONYMIZATION_KEY = "secret-managed-outside-repository"
 .\pipeline\scripts\run_pipeline.ps1 `
-  -ConnectionString "postgresql://postgres:postgres@localhost:5432/kt_nd"
+  -ConnectionString "postgresql://postgres:postgres@localhost:5432/kt_nd" `
+  -ReferenceDate "2026-09-29"
 ```
 
 체크인되지 않은 합성 데이터의 기본 HMAC 키를 사용하는 로컬 테스트에서는 다음 명령을 사용합니다.
@@ -39,14 +45,19 @@ $env:KT_ND_ANALYSIS_PSEUDONYMIZATION_KEY = "secret-managed-outside-repository"
 ```powershell
 .\pipeline\scripts\run_pipeline.ps1 `
   -ConnectionString "postgresql://postgres:postgres@localhost:5432/kt_nd" `
+  -ReferenceDate "2026-09-29" `
   -AllowSyntheticDefaultKey
 ```
 
-`-RawDirectory`와 `-ReferenceDate`로 입력 파일 위치와 기준일을 변경할 수 있습니다. 실제 비밀은 명령행 인자로 전달하지 말고, 배포 환경의 비밀 관리 도구로 전달해야 합니다.
+`-ReferenceDate`는 필수이며 생성기의 `--reference-date`와 같은 값을 사용합니다.
+`-RawDirectory`로 입력 파일 위치를 바꿀 수 있습니다. 실제 비밀은 명령행 인자로
+전달하지 말고, 배포 환경의 비밀 관리 도구로 전달해야 합니다.
 
-## 일일 증분 실행
+## 일별 파티션 배치 실행
 
-먼저 `content_usage`를 제외한 13개 스냅샷 파일로 고객·가족·상품 상태를 초기화합니다.
+생성기를 `--content-usage-layout daily --no-analysis-output`으로 실행한 결과를
+사용합니다. 먼저 `content_usage`를 제외한 13개 스냅샷 파일로 고객·가족·상품
+상태를 한 번 초기화합니다. `ReferenceDate`는 생성기의 기준일과 같아야 합니다.
 
 ```powershell
 .\pipeline\scripts\initialize_incremental_pipeline.ps1 `

@@ -24,3 +24,14 @@
 
 `source_batch_id`는 실행 계보만 나타내며 DW/DM 업무 키에는 포함되지 않습니다.
 전체 배치는 현재 상태를 전부 교체하고, 증분 배치는 사용 일자 파티션만 교체합니다.
+
+## 실행 모드
+
+| 모드 | 입력 | 실행 순서 |
+| --- | --- | --- |
+| 전체 파일 배치 | 최상위 스냅샷 CSV 13개와 단일 `content_usage.csv` | `run_pipeline.ps1` |
+| 일별 파티션 배치 | 최상위 스냅샷 CSV 13개와 `raw/content_usage/event_date=.../part-*.csv` | `initialize_incremental_pipeline.ps1` 1회 → `run_incremental_pipeline.ps1` 반복 |
+
+두 모드는 같은 DW/DM을 변경하므로 동일한 PostgreSQL advisory lock을 사용합니다.
+`ReferenceDate`는 생성한 고객 스냅샷 기준일과 일치하도록 전체 배치와 증분 초기화
+명령에 반드시 명시합니다.

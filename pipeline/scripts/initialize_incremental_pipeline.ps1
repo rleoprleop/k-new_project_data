@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory = $true)] [string] $ConnectionString,
     [string] $RawDirectory,
-    [ValidatePattern('^\d{4}-\d{2}-\d{2}$')] [string] $ReferenceDate = '2026-09-15',
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^\d{4}-\d{2}-\d{2}$')] [string] $ReferenceDate,
     [string] $PseudonymizationKey = $env:KT_ND_ANALYSIS_PSEUDONYMIZATION_KEY,
     [switch] $AllowSyntheticDefaultKey
 )
