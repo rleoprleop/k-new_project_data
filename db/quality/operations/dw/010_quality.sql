@@ -1,41 +1,28 @@
--- 운영 DW의 사용량 합계와 직접 식별 정보 부재를 검증한다.
--- 가족 키의 HMAC 가명화, 배치 ID, Raw의 모든 가족 속성을 함께 대조한다.
-call audit.assert_zero(current_setting('pipeline.batch_id')::uuid, 'operations_family_reconciliation', $$
-  select count(*)
-  from (select * from landing.raw_families
-        where source_batch_id=current_setting('pipeline.batch_id')::uuid) r
-  full join (select * from dw_operations.family
-             where source_batch_id=current_setting('pipeline.batch_id')::uuid) o
-    on o.source_batch_id=r.source_batch_id
-   and o.analysis_family_key='AFAM_'||upper(substr(encode(hmac('family:'||r.family_id,
-       current_setting('pipeline.pseudonymization_key'),'sha256'),'hex'),1,24))
-  where r.family_id is null or o.analysis_family_key is null
-     or (r.has_bundle,r.bundle_type,r.has_kt_internet,r.internet_product_group,
-         r.internet_contract_months,r.internet_status,r.bundle_discount_method,
-         r.total_discount_allocation_method,r.internet_benefit_discount_id)
-        is distinct from
-        (o.has_bundle,o.bundle_type,o.has_kt_internet,o.internet_product_group,
-         o.internet_contract_months,o.internet_status,o.bundle_discount_method,
-         o.total_discount_allocation_method,o.internet_benefit_discount_id)$$,
-  '운영 가족 키·배치 ID·전체 속성이 Raw와 일치해야 한다');
-
-call audit.assert_zero(current_setting('pipeline.batch_id')::uuid, 'operations_usage_reconciliation', $$
-  select case when coalesce((select sum(data_usage_mb)
-      from landing.raw_content_usage
-      where source_batch_id=current_setting('pipeline.batch_id')::uuid),0)
-                    = coalesce((select sum(data_usage_mb)
-      from dw_operations.content_usage
-      where source_batch_id=current_setting('pipeline.batch_id')::uuid),0)
-                    then 0 else 1 end$$,
-  'raw and operations usage sums must match');
-
-call audit.assert_zero(current_setting('pipeline.batch_id')::uuid, 'operations_no_direct_pii_column', $$
-  select count(*) from information_schema.columns
-  where table_schema in ('dw_operations','dm_operations') and column_name in ('user_id','name')$$,
-  'operations schemas must not expose raw user_id or name');
-
-call audit.assert_zero(current_setting('pipeline.batch_id')::uuid, 'operations_no_raw_user_id_value', $$
-  select count(*) from dw_operations.customer o join landing.raw_users r
-    on o.analysis_user_key=r.user_id and o.source_batch_id=r.source_batch_id
-  where o.source_batch_id=current_setting('pipeline.batch_id')::uuid$$,
-  'operations pseudonym key must never equal raw user_id');
+call audit.assert_zero(:'batch_id'::uuid,'operations_dw_14_table_counts',$$
+  select count(*) from (values
+    ((select count(*) from dw_operations.users),(select count(*) from stg_users)),
+    ((select count(*) from dw_operations.families),(select count(*) from stg_families)),
+    ((select count(*) from dw_operations.bundle_discount_compositions),(select count(*) from stg_bundle_discount_compositions)),
+    ((select count(*) from dw_operations.plans),(select count(*) from stg_plans)),
+    ((select count(*) from dw_operations.age_benefits),(select count(*) from stg_age_benefits)),
+    ((select count(*) from dw_operations.plan_age_benefits),(select count(*) from stg_plan_age_benefits)),
+    ((select count(*) from dw_operations.additional_services),(select count(*) from stg_additional_services)),
+    ((select count(*) from dw_operations.plan_benefits),(select count(*) from stg_plan_benefits)),
+    ((select count(*) from dw_operations.discounts),(select count(*) from stg_discounts)),
+    ((select count(*) from dw_operations.internet_bundle_discount_rules),(select count(*) from stg_internet_bundle_discount_rules)),
+    ((select count(*) from dw_operations.premium_family_discount_rules),(select count(*) from stg_premium_family_discount_rules)),
+    ((select count(*) from dw_operations.user_discounts),(select count(*) from stg_user_discounts)),
+    ((select count(*) from dw_operations.user_services),(select count(*) from stg_user_services))
+  ) x(actual,expected) where actual<>expected$$,'13 master/current-state tables must match staging');
+call audit.assert_zero(:'batch_id'::uuid,'operations_dw_usage_total',$$
+  select case when (select coalesce(sum(data_usage_mb),0) from dw_operations.content_usage)=
+    (select coalesce(sum(data_usage_mb),0) from stg_content_usage
+      where usage_date<=current_setting('pipeline.reference_date')::date-1) then 0 else 1 end$$,
+  'category aggregation must preserve usage total');
+call audit.assert_zero(:'batch_id'::uuid,'operations_dw_key_format',$$
+  select count(*) from dw_operations.users where analysis_user_key !~ '^AUSR_[0-9A-F]{24}$'$$,
+  'operations users must contain only HMAC analysis keys');
+call audit.assert_zero(:'batch_id'::uuid,'operations_dw_category_grain',$$
+  select count(*) from (select analysis_user_key,usage_date,content_category,count(*)
+    from dw_operations.content_usage group by 1,2,3 having count(*)>1) x$$,
+  'operations usage grain must be user/date/category');

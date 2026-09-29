@@ -1,78 +1,71 @@
 \set ON_ERROR_STOP on
-\ir ../../db/schema/001_audit_landing_common.sql
+\ir ../../db/schema/001_audit.sql
 \ir ../../db/schema/020_dw_operations.sql
 \ir ../../db/schema/030_dw_personalization.sql
 \ir ../../db/schema/040_dm_operations.sql
 \ir ../../db/schema/050_dm_personalization.sql
+\ir ../../db/schema/060_ai_views_roles.sql
 
 select pg_advisory_lock(hashtextextended('content_usage_daily',0));
-select exists(
-    select 1 from audit.pipeline_run
-    where pipeline_name='content_usage_daily'
-      and source_set_checksum=:'source_set_checksum'
-      and status='SUCCEEDED') as already_succeeded \gset
+select exists(select 1 from audit.pipeline_run where pipeline_name='content_usage_daily'
+  and source_set_checksum=:'source_set_checksum' and status='SUCCEEDED') as already_succeeded \gset
 \if :already_succeeded
   \echo incremental dataset initialization already succeeded; no-op
   select pg_advisory_unlock(hashtextextended('content_usage_daily',0));
   \quit
 \endif
-
-select audit.start_pipeline_run(
-    :'source_set_checksum', :'reference_date'::date, 'content_usage_daily',
-    'DATASET_INITIALIZATION') as batch_id \gset
+select audit.start_pipeline_run(:'source_set_checksum',:'reference_date'::date,
+  'content_usage_daily','DATASET_INITIALIZATION') as batch_id \gset
 
 begin;
-set local pipeline.batch_id = :'batch_id';
-set local pipeline.pseudonymization_key = :'pseudonymization_key';
-set local pipeline.reference_date = :'reference_date';
+set local pipeline.batch_id=:'batch_id';
+set local pipeline.pseudonymization_key=:'pseudonymization_key';
+set local pipeline.reference_date=:'reference_date';
+\ir ../../db/load/005_load_master_staging.psql
+\ir ../../db/quality/010_staging_full.sql
 
-\ir ../../db/load/005_load_landing_master.psql
-\ir ../../db/quality/010_landing_raw.sql
-
--- 초기화는 기존 현재 상태와 워터마크를 모두 교체한다.
-delete from dm_personalization.customer_usage_feature_snapshot;
-delete from dm_personalization.fact_customer_daily_usage;
-delete from dm_personalization.dim_customer;
-delete from dm_operations.fact_daily_usage_summary;
-delete from dm_personalization.dim_plan;
-delete from dm_operations.dim_plan;
-delete from dw_operations.user_discount;
-delete from dw_operations.user_service;
-delete from dw_operations.content_usage;
-delete from dw_operations.bundle_composition;
-delete from dw_operations.customer;
-delete from dw_operations.family;
-delete from dw_personalization.user_discount;
-delete from dw_personalization.user_service;
-delete from dw_personalization.content_usage;
-delete from dw_personalization.bundle_composition;
-delete from dw_personalization.customer_identity_bridge;
-delete from dw_personalization.customer_profile;
-delete from dw_personalization.family;
-delete from dw_common.premium_family_discount_rule;
-delete from dw_common.internet_bundle_discount_rule;
-delete from dw_common.plan_benefit;
-delete from dw_common.plan_age_benefit;
-delete from dw_common.discount;
-delete from dw_common.additional_service;
-delete from dw_common.age_benefit;
-delete from dw_common.plan;
+-- 초기화는 빈 데이터베이스에서 실행한다. 전체 현재 상태를 일관되게 교체한다.
+truncate table
+  dm_operations.daily_usage_segment,dm_operations.monthly_usage_segment,
+  dm_operations.customer_daily_usage,dm_operations.customer_monthly_category_usage,
+  dm_operations.subscriber_current,dm_operations.family_current,
+  dm_operations.customer_service_current,dm_operations.customer_discount_current,
+  dm_operations.dim_analysis_customer,dm_operations.dim_analysis_family,
+  dm_operations.dim_content_category,dm_operations.dim_age_band,dm_operations.dim_plan,
+  dm_operations.dim_service,dm_operations.dim_discount,dm_operations.dim_date,
+  dm_personalization.customer_daily_usage,dm_personalization.customer_monthly_usage,
+  dm_personalization.customer_monthly_content_usage,
+  dm_personalization.customer_service_current,dm_personalization.customer_discount_current,
+  dm_personalization.customer_family_current,dm_personalization.bridge_service_content,
+  dm_personalization.dim_customer,dm_personalization.dim_family,
+  dm_personalization.dim_content,dm_personalization.dim_plan,
+  dm_personalization.dim_service,dm_personalization.dim_discount,dm_personalization.dim_date,
+  dw_operations.content_usage,dw_operations.user_discounts,dw_operations.user_services,
+  dw_operations.bundle_discount_compositions,dw_operations.users,dw_operations.families,
+  dw_operations.plan_age_benefits,dw_operations.plan_benefits,
+  dw_operations.internet_bundle_discount_rules,dw_operations.premium_family_discount_rules,
+  dw_operations.plans,dw_operations.age_benefits,dw_operations.additional_services,
+  dw_operations.discounts,
+  dw_personalization.content_usage,dw_personalization.user_discounts,
+  dw_personalization.user_services,dw_personalization.bundle_discount_compositions,
+  dw_personalization.users,dw_personalization.families,
+  dw_personalization.plan_age_benefits,dw_personalization.plan_benefits,
+  dw_personalization.internet_bundle_discount_rules,
+  dw_personalization.premium_family_discount_rules,dw_personalization.plans,
+  dw_personalization.age_benefits,dw_personalization.additional_services,
+  dw_personalization.discounts restart identity cascade;
 delete from audit.ingestion_watermark where pipeline_name='content_usage_daily';
 
 \ir ../../db/transform/common/010_load_master.sql
-
 \ir ../../db/transform/operations/dw/010_build.sql
 \ir ../../db/transform/personalization/dw/010_build.sql
 \ir ../../db/transform/operations/dm/010_build.sql
 \ir ../../db/transform/personalization/dm/010_build.sql
-
 \ir ../../db/quality/operations/dw/010_quality.sql
 \ir ../../db/quality/personalization/dw/010_quality.sql
 \ir ../../db/quality/operations/dm/010_quality.sql
 \ir ../../db/quality/personalization/dm/010_quality.sql
-
-update audit.pipeline_run
-set status='SUCCEEDED',ended_at=clock_timestamp(),error_message=null
+update audit.pipeline_run set status='SUCCEEDED',ended_at=clock_timestamp(),error_message=null
 where batch_id=:'batch_id'::uuid;
 commit;
 select pg_advisory_unlock(hashtextextended('content_usage_daily',0));

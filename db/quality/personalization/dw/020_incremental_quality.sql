@@ -1,11 +1,12 @@
-call audit.assert_zero(current_setting('pipeline.batch_id')::uuid,
-    'incremental_personalization_usage_reconciliation', $$
-  select case when
-    coalesce((select sum(data_usage_mb) from landing.raw_content_usage
-      where source_batch_id=current_setting('pipeline.batch_id')::uuid),0)
-    =
-    coalesce((select sum(data_usage_mb) from dw_personalization.content_usage
+call audit.assert_zero(:'batch_id'::uuid,'personalization_dw_incremental_rows',$$
+  select case when (select count(*) from dw_personalization.content_usage
       where usage_date between current_setting('pipeline.event_date_from')::date
-          and current_setting('pipeline.event_date_to')::date),0)
-  then 0 else 1 end$$,
-  'incremental raw and personalization DW usage sums must match');
+        and current_setting('pipeline.event_date_to')::date)=
+    (select count(*) from stg_content_usage) then 0 else 1 end$$,
+  'personalization detail rows must match staged rows');
+call audit.assert_zero(:'batch_id'::uuid,'personalization_dw_incremental_total',$$
+  select case when (select coalesce(sum(data_usage_mb),0) from dw_personalization.content_usage
+      where usage_date between current_setting('pipeline.event_date_from')::date
+        and current_setting('pipeline.event_date_to')::date)=
+    (select coalesce(sum(data_usage_mb),0) from stg_content_usage) then 0 else 1 end$$,
+  'personalization incremental total must match staging');

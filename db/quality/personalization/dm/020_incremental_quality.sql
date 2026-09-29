@@ -1,24 +1,17 @@
-call audit.assert_zero(current_setting('pipeline.batch_id')::uuid,
-    'incremental_personalization_dm_usage_reconciliation', $$
-  select case when
-    coalesce((select sum(data_usage_mb) from dw_personalization.content_usage
-      where usage_date between current_setting('pipeline.event_date_from')::date
-          and current_setting('pipeline.event_date_to')::date),0)
-    =
-    coalesce((select sum(data_usage_mb) from dm_personalization.fact_customer_daily_usage
-      where usage_date between current_setting('pipeline.event_date_from')::date
-          and current_setting('pipeline.event_date_to')::date),0)
-  then 0 else 1 end$$,
-  'incremental personalization DW and DM usage sums must match');
-
-call audit.assert_zero(current_setting('pipeline.batch_id')::uuid,
-    'incremental_feature_snapshot_completeness', $$
-  select case when
-    (select count(*) from dm_personalization.customer_usage_feature_snapshot f
+call audit.assert_zero(:'batch_id'::uuid,'personalization_dm_incremental_daily_total',$$
+  select case when (select coalesce(sum(f.total_usage_mb),0)
+      from dm_personalization.customer_daily_usage f cross join incremental_context c
+      where f.date_key between to_char(c.event_date_from,'YYYYMMDD')::integer
+        and to_char(c.fact_rebuild_to,'YYYYMMDD')::integer)=
+    (select coalesce(sum(u.data_usage_mb),0) from dw_personalization.content_usage u
+      cross join incremental_context c where u.usage_date between c.event_date_from and c.fact_rebuild_to)
+    then 0 else 1 end$$,'rebuilt customer daily totals must reconcile to DW');
+call audit.assert_zero(:'batch_id'::uuid,'personalization_dm_incremental_monthly_total',$$
+  select case when (select coalesce(sum(f.total_usage_mb),0)
+      from dm_personalization.customer_monthly_usage f cross join incremental_context c
+      where f.month_key between to_char(date_trunc('month',c.event_date_from),'YYYYMMDD')::integer
+        and to_char(date_trunc('month',c.fact_rebuild_to),'YYYYMMDD')::integer)=
+    (select coalesce(sum(u.data_usage_mb),0) from dw_personalization.content_usage u
       cross join incremental_context c
-      where f.feature_reference_date between c.event_date_from and c.feature_rebuild_to)
-    =
-    (select count(*) from dm_personalization.dim_customer)
-      * (select feature_rebuild_to-event_date_from+1 from incremental_context)
-  then 0 else 1 end$$,
-  'every customer must have one feature snapshot per rebuilt date');
+      where u.usage_date between date_trunc('month',c.event_date_from)::date and c.fact_rebuild_to)
+    then 0 else 1 end$$,'rebuilt customer monthly totals must reconcile to DW');

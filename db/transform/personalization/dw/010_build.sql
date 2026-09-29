@@ -1,41 +1,12 @@
--- 개인화 DW의 이름은 접근이 제한된 식별 연결 테이블에만 한 번 저장한다.
-insert into dw_personalization.family (
-       source_batch_id,family_id,has_bundle,bundle_type,has_kt_internet,internet_product_group,
-       internet_contract_months,internet_status,bundle_discount_method,
-       total_discount_allocation_method,internet_benefit_discount_id)
-select source_batch_id,family_id,has_bundle,bundle_type,has_kt_internet,internet_product_group,
-       internet_contract_months,internet_status,bundle_discount_method,
-       total_discount_allocation_method,internet_benefit_discount_id
-    from landing.raw_families f
-    where source_batch_id=:'batch_id'::uuid;
-
-insert into dw_personalization.customer_profile
-select source_batch_id,user_id,age,gender,subscription_start_date,current_plan_id,family_id
-    from landing.raw_users
-    where source_batch_id=:'batch_id'::uuid;
-
-insert into dw_personalization.customer_identity_bridge
-select source_batch_id,user_id,name
-    from landing.raw_users
-    where source_batch_id=:'batch_id'::uuid;
-
-insert into dw_personalization.bundle_composition
-select source_batch_id,bundle_composition_id,family_id,component_type,user_id,component_role,status,
-    start_date,end_date
-    from landing.raw_bundle_discount_compositions
-    where source_batch_id=:'batch_id'::uuid;
-
+-- 개인화 DW는 14개 CSV의 업무 키와 name/detail을 유지한다.
+insert into dw_personalization.families select :'batch_id'::uuid,f.* from stg_families f;
+insert into dw_personalization.users select :'batch_id'::uuid,u.* from stg_users u;
+insert into dw_personalization.bundle_discount_compositions
+  select :'batch_id'::uuid,b.* from stg_bundle_discount_compositions b;
+insert into dw_personalization.user_discounts
+  select :'batch_id'::uuid,d.* from stg_user_discounts d;
+insert into dw_personalization.user_services
+  select :'batch_id'::uuid,s.* from stg_user_services s;
 insert into dw_personalization.content_usage
-select source_batch_id,user_id,usage_date,content_category,content_detail,data_usage_mb
-    from landing.raw_content_usage
-    where source_batch_id=:'batch_id'::uuid;
-
-insert into dw_personalization.user_discount
-select source_batch_id,user_id,bundle_composition_id,discount_id,status,start_date,end_date
-    from landing.raw_user_discounts
-    where source_batch_id=:'batch_id'::uuid;
-
-insert into dw_personalization.user_service
-select source_batch_id,user_id,service_id,benefit_type,start_date
-    from landing.raw_user_services
-    where source_batch_id=:'batch_id'::uuid;
+  select :'batch_id'::uuid,c.* from stg_content_usage c
+  where c.usage_date<=:'reference_date'::date-1;

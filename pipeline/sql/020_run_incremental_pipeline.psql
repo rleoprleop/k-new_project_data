@@ -1,57 +1,44 @@
 \set ON_ERROR_STOP on
-\ir ../../db/schema/001_audit_landing_common.sql
+\ir ../../db/schema/001_audit.sql
 \ir ../../db/schema/020_dw_operations.sql
 \ir ../../db/schema/030_dw_personalization.sql
 \ir ../../db/schema/040_dm_operations.sql
 \ir ../../db/schema/050_dm_personalization.sql
+\ir ../../db/schema/060_ai_views_roles.sql
 
 select pg_advisory_lock(hashtextextended('content_usage_daily',0));
-select exists(
-    select 1 from audit.pipeline_run
-    where pipeline_name='content_usage_daily'
-      and source_set_checksum=:'source_set_checksum'
-      and status='SUCCEEDED') as already_succeeded \gset
+select exists(select 1 from audit.pipeline_run where pipeline_name='content_usage_daily'
+  and source_set_checksum=:'source_set_checksum' and status='SUCCEEDED') as already_succeeded \gset
 \if :already_succeeded
   \echo incremental source set already succeeded; no-op
   select pg_advisory_unlock(hashtextextended('content_usage_daily',0));
   \quit
 \endif
-
-select audit.start_pipeline_run(
-    :'source_set_checksum', :'reference_date'::date, 'content_usage_daily', :'run_type',
-    :'event_date_from'::date, :'event_date_to'::date, :'cutoff_date'::date) as batch_id \gset
+select audit.start_pipeline_run(:'source_set_checksum',:'reference_date'::date,
+  'content_usage_daily',:'run_type',:'event_date_from'::date,:'event_date_to'::date,
+  :'cutoff_date'::date) as batch_id \gset
 
 begin;
-set local pipeline.batch_id = :'batch_id';
-set local pipeline.pseudonymization_key = :'pseudonymization_key';
-set local pipeline.reference_date = :'reference_date';
-set local pipeline.event_date_from = :'event_date_from';
-set local pipeline.event_date_to = :'event_date_to';
-set local pipeline.cutoff_date = :'cutoff_date';
+set local pipeline.batch_id=:'batch_id';
+set local pipeline.pseudonymization_key=:'pseudonymization_key';
+set local pipeline.reference_date=:'reference_date';
+set local pipeline.event_date_from=:'event_date_from';
+set local pipeline.event_date_to=:'event_date_to';
+set local pipeline.cutoff_date=:'cutoff_date';
 
 create temp table incremental_context on commit drop as
-select :'run_type'::text run_type,
-    :'event_date_from'::date event_date_from,
-    :'event_date_to'::date event_date_to,
-    :'cutoff_date'::date cutoff_date,
-    w.last_successful_event_date watermark_before,
-    case when :'run_type'='CORRECTION' then least(
-        w.last_successful_event_date,
-        (date_trunc('month',:'event_date_to'::date)+interval '1 month'-interval '1 day')::date)
-      else :'event_date_to'::date end fact_rebuild_to,
-    case when :'run_type'='CORRECTION' then least(
-        w.last_successful_event_date,
-        greatest(:'event_date_to'::date+29,
-          (date_trunc('month',:'event_date_to'::date)+interval '1 month'-interval '1 day')::date))
-      else :'event_date_to'::date end feature_rebuild_to
-from (select 1) seed
-left join audit.ingestion_watermark w on w.pipeline_name='content_usage_daily';
+select :'run_type'::text run_type,:'event_date_from'::date event_date_from,
+  :'event_date_to'::date event_date_to,:'cutoff_date'::date cutoff_date,
+  w.last_successful_event_date watermark_before,
+  case when :'run_type'='CORRECTION' then least(w.last_successful_event_date,
+    (date_trunc('month',:'event_date_to'::date)+interval '1 month'-interval '1 day')::date)
+    else :'event_date_to'::date end fact_rebuild_to
+from (select 1) seed left join audit.ingestion_watermark w
+  on w.pipeline_name='content_usage_daily';
 
-do $$
-declare c incremental_context%rowtype;
-begin
+do $$ declare c incremental_context%rowtype; begin
   select * into c from incremental_context;
-  if not exists (select 1 from dw_personalization.customer_profile) then
+  if not exists(select 1 from dw_personalization.users) then
     raise exception 'incremental dataset is not initialized';
   end if;
   if c.event_date_to>c.cutoff_date then
@@ -59,20 +46,18 @@ begin
   end if;
   if c.run_type='INCREMENTAL' then
     if c.watermark_before is not null and c.event_date_from<>c.watermark_before+1 then
-      raise exception 'expected next event date %, received %',
-          c.watermark_before+1,c.event_date_from;
+      raise exception 'expected next event date %, received %',c.watermark_before+1,c.event_date_from;
     end if;
   elsif c.run_type='CORRECTION' then
     if c.watermark_before is null or c.event_date_to>c.watermark_before then
       raise exception 'correction range must not exceed the successful watermark';
     end if;
-  else
-    raise exception 'unsupported incremental run type %',c.run_type;
+  else raise exception 'unsupported incremental run type %',c.run_type;
   end if;
 end $$;
 
 \ir ../../db/load/020_load_incremental_content_usage.psql
-\ir ../../db/quality/020_landing_incremental.sql
+\ir ../../db/quality/020_staging_incremental.sql
 \ir ../../db/transform/operations/dw/020_apply_content_usage_incremental.sql
 \ir ../../db/transform/personalization/dw/020_apply_content_usage_incremental.sql
 \ir ../../db/transform/operations/dm/020_refresh_usage_incremental.sql
@@ -82,17 +67,13 @@ end $$;
 \ir ../../db/quality/operations/dm/020_incremental_quality.sql
 \ir ../../db/quality/personalization/dm/020_incremental_quality.sql
 
-insert into audit.ingestion_watermark(
-    pipeline_name,last_successful_event_date,last_successful_batch_id)
+insert into audit.ingestion_watermark(pipeline_name,last_successful_event_date,last_successful_batch_id)
 select 'content_usage_daily',event_date_to,:'batch_id'::uuid
 from incremental_context where run_type='INCREMENTAL'
 on conflict(pipeline_name) do update
 set last_successful_event_date=excluded.last_successful_event_date,
-    last_successful_batch_id=excluded.last_successful_batch_id,
-    updated_at=clock_timestamp();
-
-update audit.pipeline_run
-set status='SUCCEEDED',ended_at=clock_timestamp(),error_message=null
+  last_successful_batch_id=excluded.last_successful_batch_id,updated_at=clock_timestamp();
+update audit.pipeline_run set status='SUCCEEDED',ended_at=clock_timestamp(),error_message=null
 where batch_id=:'batch_id'::uuid;
 commit;
 select pg_advisory_unlock(hashtextextended('content_usage_daily',0));

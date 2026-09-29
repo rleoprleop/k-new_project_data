@@ -1,30 +1,26 @@
--- 개인화 DW와 원천 사용량의 합계를 검증한다.
--- 원본 가족 ID와 배치 ID 및 모든 가족 속성의 누락 여부를 대조한다.
-call audit.assert_zero(current_setting('pipeline.batch_id')::uuid,
-    'personalization_family_reconciliation', $$
-  select count(*)
-  from (select * from landing.raw_families
-        where source_batch_id=current_setting('pipeline.batch_id')::uuid) r
-  full join (select * from dw_personalization.family
-             where source_batch_id=current_setting('pipeline.batch_id')::uuid) p
-    on p.source_batch_id=r.source_batch_id and p.family_id=r.family_id
-  where r.family_id is null or p.family_id is null
-     or (r.has_bundle,r.bundle_type,r.has_kt_internet,r.internet_product_group,
-         r.internet_contract_months,r.internet_status,r.bundle_discount_method,
-         r.total_discount_allocation_method,r.internet_benefit_discount_id)
-        is distinct from
-        (p.has_bundle,p.bundle_type,p.has_kt_internet,p.internet_product_group,
-         p.internet_contract_months,p.internet_status,p.bundle_discount_method,
-         p.total_discount_allocation_method,p.internet_benefit_discount_id)$$,
-  '개인화 가족 키·배치 ID·전체 속성이 Raw와 일치해야 한다');
-
-call audit.assert_zero(current_setting('pipeline.batch_id')::uuid,
-    'personalization_usage_reconciliation', $$
-  select case when coalesce((select sum(data_usage_mb)
-      from landing.raw_content_usage
-      where source_batch_id=current_setting('pipeline.batch_id')::uuid),0)
-                    = coalesce((select sum(data_usage_mb)
-      from dw_personalization.content_usage
-      where source_batch_id=current_setting('pipeline.batch_id')::uuid),0)
-                    then 0 else 1 end$$,
-  'raw and personalization usage sums must match');
+call audit.assert_zero(:'batch_id'::uuid,'personalization_dw_14_table_counts',$$
+  select count(*) from (values
+    ((select count(*) from dw_personalization.users),(select count(*) from stg_users)),
+    ((select count(*) from dw_personalization.families),(select count(*) from stg_families)),
+    ((select count(*) from dw_personalization.bundle_discount_compositions),(select count(*) from stg_bundle_discount_compositions)),
+    ((select count(*) from dw_personalization.plans),(select count(*) from stg_plans)),
+    ((select count(*) from dw_personalization.age_benefits),(select count(*) from stg_age_benefits)),
+    ((select count(*) from dw_personalization.plan_age_benefits),(select count(*) from stg_plan_age_benefits)),
+    ((select count(*) from dw_personalization.additional_services),(select count(*) from stg_additional_services)),
+    ((select count(*) from dw_personalization.plan_benefits),(select count(*) from stg_plan_benefits)),
+    ((select count(*) from dw_personalization.discounts),(select count(*) from stg_discounts)),
+    ((select count(*) from dw_personalization.internet_bundle_discount_rules),(select count(*) from stg_internet_bundle_discount_rules)),
+    ((select count(*) from dw_personalization.premium_family_discount_rules),(select count(*) from stg_premium_family_discount_rules)),
+    ((select count(*) from dw_personalization.user_discounts),(select count(*) from stg_user_discounts)),
+    ((select count(*) from dw_personalization.user_services),(select count(*) from stg_user_services)),
+    ((select count(*) from dw_personalization.content_usage),(select count(*) from stg_content_usage
+      where usage_date<=current_setting('pipeline.reference_date')::date-1))
+  ) x(actual,expected) where actual<>expected$$,
+  '13 master tables and cutoff-eligible content rows must match staging');
+call audit.assert_zero(:'batch_id'::uuid,'personalization_dw_name_preserved',$$
+  select count(*) from dw_personalization.users u join stg_users s using(user_id)
+  where u.name<>s.name$$,'users.name must be retained in personalization DW');
+call audit.assert_zero(:'batch_id'::uuid,'personalization_dw_detail_grain',$$
+  select count(*) from (select user_id,usage_date,content_category,content_detail,count(*)
+    from dw_personalization.content_usage group by 1,2,3,4 having count(*)>1) x$$,
+  'personalization usage grain must be user/date/category/detail');

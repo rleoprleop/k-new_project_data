@@ -2,13 +2,18 @@
 param(
     [Parameter(Mandatory = $true)] [string] $ConnectionString,
     [string] $RawDirectory,
-    [Parameter(Mandatory = $true)]
     [ValidatePattern('^\d{4}-\d{2}-\d{2}$')] [string] $ReferenceDate,
     [string] $PseudonymizationKey = $env:KT_ND_ANALYSIS_PSEUDONYMIZATION_KEY,
     [switch] $AllowSyntheticDefaultKey
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($ReferenceDate)) {
+    try { $koreaTimeZone = [TimeZoneInfo]::FindSystemTimeZoneById('Korea Standard Time') }
+    catch { $koreaTimeZone = [TimeZoneInfo]::FindSystemTimeZoneById('Asia/Seoul') }
+    $ReferenceDate = [TimeZoneInfo]::ConvertTimeFromUtc(
+        [DateTime]::UtcNow, $koreaTimeZone).ToString('yyyy-MM-dd')
+}
 if ([string]::IsNullOrWhiteSpace($RawDirectory)) {
     $RawDirectory = Join-Path $PSScriptRoot '..\..\generator\data\generated'
 }

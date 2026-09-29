@@ -1,49 +1,34 @@
 # Database
 
-이 폴더는 PostgreSQL 데이터 계층의 단일 기준점입니다. 테이블·제약조건·적재·변환·품질 검사 SQL은 모두 이곳에서 관리하며, [`pipeline/`](../pipeline/README.md)은 이 SQL을 배치 순서대로 실행합니다.
-
-## 논리 데이터 계층
+PostgreSQL 15 이상에서 운영 분석과 개인화 분석을 시스템적으로 분리하는 DW/DM입니다.
 
 ```text
-Data Lake (로컬 CSV 또는 향후 S3)
-  → landing.raw_*                 원본 적재와 배치 이력
-  → dw_common                     공통 마스터
-  → dw_operations / dw_personalization
-  → dm_operations / dm_personalization
+S3 또는 로컬 CSV 14개
+  → pg_temp staging (배치 트랜잭션 동안만 존재)
+  ├─ dw_operations       HMAC 가명 키, category 사용량
+  │   └─ dm_operations  운영 집계 Star Schema
+  └─ dw_personalization  user_id·name·content_detail 유지
+      └─ dm_personalization  개인화 Star Schema
+          → ai_personalization View
 ```
 
-| PostgreSQL 스키마 | 역할 |
+영구 Landing과 `dw_common`은 사용하지 않습니다. 14개 원천 논리 테이블은 두 DW에
+각각 존재하며, 운영 DW만 사용자·가족·연결 키를 즉시 HMAC으로 치환합니다.
+
+| 스키마 | 역할 |
 | --- | --- |
-| `audit` | 배치 상태, 파일 checksum·행 수, 워터마크, 품질 검사 결과 |
-| `landing` | 원본 ID와 값이 유지되는 배치별 `raw_*` 테이블. Data Landing 계층 |
-| `dw_common` | 요금제·할인·서비스·정책의 공통 기준 데이터 |
-| `dw_operations` | 가명화된 운영 분석 상세 데이터 |
-| `dw_personalization` | 사용자 연결이 가능한 개인화 상세 데이터와 identity bridge |
-| `dm_operations` | 운영 지표·집계 Fact와 Dimension |
-| `dm_personalization` | 사용자별 사용량 Fact와 추천 Feature Snapshot |
+| `audit` | 배치 상태, 파일 checksum·행 수, 워터마크, 품질 결과 |
+| `dw_operations` | 이름·원본 ID·detail이 없는 운영 상세 데이터 |
+| `dw_personalization` | `user_id`, `name`, 제한적 `content_detail`을 포함한 개인화 상세 데이터 |
+| `dm_operations` | 가입자·가족·서비스·할인과 일/월 운영 집계 |
+| `dm_personalization` | 고객 일/월 사용량, 월 detail 집계, 현재 상태 Dimension |
+| `ai_operations` | 운영 n8n 고정 쿼리 전용 View |
+| `ai_personalization` | 개인화 n8n 고정 쿼리 전용 View. 사용자 결과에 `name` 포함 |
 
-## 폴더와 실행 순서
+`content_usage`의 개인화 원자 grain은 사용자×일자×category×detail입니다. 약 5천만 건의
+상세 행을 다시 복제하지 않도록 `dm_personalization.customer_content_daily_usage`는 DW를
+스타 형태로 연결한 View이고, 일 합계와 월 합계·월 detail은 물리 테이블입니다.
 
-| 경로 | 내용 |
-| --- | --- |
-| [`schema/`](schema/) | extension, audit, landing, DW, DM의 DDL |
-| [`load/`](load/README.md) | CSV를 `landing.raw_*`에 적재하고 Raw 품질을 확인하는 SQL |
-| [`transform/`](transform/) | Landing 데이터를 공통·운영·개인화 DW/DM으로 만드는 SQL |
-| [`quality/`](quality/) | Landing·DW·DM 결과 검증 SQL |
-| [`legacy/supabase-landing/`](legacy/supabase-landing/) | 가명화 분석 CSV를 직접 적재하던 이전 Supabase 초기안. 현재 파이프라인에서는 실행하지 않음 |
-
-스키마를 준비한 뒤 `load → transform → quality` 순서로 실행합니다. 실제 트랜잭션 경계, 재실행, checksum과 오류 처리는 [`pipeline/SQL_EXECUTION.md`](../pipeline/SQL_EXECUTION.md)가 담당합니다.
-
-운영·개인화 DW의 `family`는 Raw 가족 속성을 JSONB 대신 명시 컬럼으로 저장합니다. `dw_common`의 정책 JSONB와 개인화 DM의 `content_category_usage_ratio` JSONB는 그대로 유지합니다.
-
-## 개발과 운영의 Lake
-
-- **로컬 개발·PoC**: `generator/data/generated/*.csv`를 PostgreSQL `\copy`로 적재합니다.
-- **AWS 운영 전환**: 같은 원본 CSV를 S3 Data Lake에 보관하고, 실행 환경이 S3에서 파일을 내려받아 동일한 Landing SQL을 수행합니다.
-
-Landing 이후의 DW·DM SQL은 두 방식에서 공통으로 사용합니다.
-
-DW/DM의 `source_batch_id`는 적재 실행 계보이며 업무 PK에는 포함되지 않습니다.
-콘텐츠 사용량의 업무 grain은 사용자 × 사용 일자 × 콘텐츠 대분류 × 상세분류입니다.
-일일 증분은 이 grain의 날짜 파티션을 교체하므로 동일 파일 재실행과 완전 파티션
-정정에서 중복이 남지 않습니다.
+실행 순서는 `schema → pg_temp staging → DW → DM → quality`입니다. 실제 연결과 적재는
+[`pipeline/`](../pipeline/README.md)에서 나중에 수행하며, 저장소에는 연결 문자열·비밀번호·키를
+기록하지 않습니다.

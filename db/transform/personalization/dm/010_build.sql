@@ -1,98 +1,92 @@
--- 개인화 Dimension, 일별 사용량 Fact, Feature Snapshot을 생성한다.
-insert into dm_personalization.dim_plan
-select plan_id,plan_name,monthly_fee,data_limit_gb,is_unlimited from dw_common.plan
-on conflict(plan_id)
-    do update set (plan_name,monthly_fee,data_limit_gb,is_unlimited)=
-(excluded.plan_name,excluded.monthly_fee,excluded.data_limit_gb,excluded.is_unlimited);
+insert into dm_personalization.dim_date
+select to_char(d,'YYYYMMDD')::integer,d,date_trunc('month',d)::date,
+  extract(year from d)::integer,extract(quarter from d)::integer,
+  extract(day from d)::integer,extract(isodow from d)::integer,
+  extract(isodow from d) in (6,7)
+from generate_series((select date_trunc('month',min(usage_date))::date from dw_personalization.content_usage),
+  (select max(usage_date) from dw_personalization.content_usage),interval '1 day') x(d);
 
+insert into dm_personalization.dim_plan
+select plan_id,plan_name,plan_family,plan_category,monthly_fee,data_limit_gb,is_unlimited,
+  choice_tier,network_type from dw_personalization.plans;
 insert into dm_personalization.dim_content(content_category,content_detail)
 select distinct content_category,content_detail
-    from dw_personalization.content_usage
-    where source_batch_id=:'batch_id'::uuid
-    on conflict do nothing;
+from dw_personalization.content_usage order by 1,2;
+insert into dm_personalization.dim_service
+select service_id,service_name,service_category,normal_monthly_price
+from dw_personalization.additional_services;
+insert into dm_personalization.dim_discount
+select discount_id,policy_domain,benefit_code,discount_name from dw_personalization.discounts;
+insert into dm_personalization.dim_family(
+  family_id,has_bundle,bundle_type,has_kt_internet,internet_product_group,internet_status)
+select family_id,has_bundle,bundle_type,has_kt_internet,internet_product_group,internet_status
+from dw_personalization.families;
 
-with bounds as (select min(usage_date) lo,
-    max(usage_date) hi from landing.raw_content_usage where source_batch_id=:'batch_id'::uuid),
-dates as (select d::date calendar_date from bounds cross join lateral generate_series(lo,hi,
-    interval '1 day') d)
-insert into dm_personalization.dim_date
-select to_char(calendar_date,'YYYYMMDD')::int,calendar_date,date_trunc('month',calendar_date)::date,
-extract(year from calendar_date)::int,extract(quarter from calendar_date)::int,
-    extract(isodow from calendar_date)::int,
-extract(isodow from calendar_date) in (6,7)
-    from dates on conflict(calendar_date) do nothing;
+insert into dm_personalization.dim_customer(
+  source_batch_id,user_id,name,plan_id,age,gender,subscription_start_date,family_key)
+select u.source_batch_id,u.user_id,u.name,u.current_plan_id,u.age,u.gender,
+  u.subscription_start_date,f.family_key
+from dw_personalization.users u
+left join dm_personalization.dim_family f on f.family_id=u.family_id;
 
--- 개인화 팩트의 입도: 사용자 × 사용 일자 × 콘텐츠 대/상세분류.
-insert into dm_personalization.dim_customer(source_batch_id,user_id,current_plan_id,age,gender,
-    subscription_start_date)
-select source_batch_id,user_id,current_plan_id,age,gender,subscription_start_date
-from dw_personalization.customer_profile where source_batch_id=:'batch_id'::uuid;
+insert into dm_personalization.bridge_service_content(service_id,content_key)
+select m.service_id,c.content_key
+from (values
+  ('S001','netflix'),('S002','youtube_video'),('S002','youtube_shorts'),
+  ('S002','youtube_music'),('S003','tving'),('S004','genie_music'),
+  ('S005','milli_ebook'),('S006','disney_plus'),('S009','google_ai')
+) m(service_id,content_detail)
+join dm_personalization.dim_service s on s.service_id=m.service_id
+join dm_personalization.dim_content c on c.content_detail=m.content_detail;
 
-insert into dm_personalization.fact_customer_daily_usage
-select x.source_batch_id,dc.customer_key,x.usage_date,dc.current_plan_id,k.content_key,x.data_usage_mb,
-       x.daily_total_usage_mb,x.month_to_date_usage_mb,
-       case when p.is_unlimited or p.data_limit_gb is null or p.data_limit_gb=0 then null
-            else x.month_to_date_usage_mb/(p.data_limit_gb*1024) end
-from (
-  select c.*,sum(data_usage_mb) over(partition by source_batch_id,user_id,usage_date) daily_total_usage_mb,
-         sum(data_usage_mb) over(partition by source_batch_id,user_id,date_trunc('month',
-             usage_date) order by usage_date) month_to_date_usage_mb
-  from dw_personalization.content_usage c where source_batch_id=:'batch_id'::uuid
-) x
-join dm_personalization.dim_customer dc on (dc.source_batch_id,dc.user_id)=(x.source_batch_id,x.user_id)
-join dm_personalization.dim_content k on (k.content_category,k.content_detail)=(x.content_category,
-    x.content_detail)
-join dm_personalization.dim_plan p on p.plan_id=dc.current_plan_id;
-
--- 특성 테이블의 입도: 원천 배치 × user_id × 특성 기준일.
 with daily as (
-  select source_batch_id,user_id,usage_date,sum(data_usage_mb) usage_mb
-  from dw_personalization.content_usage
-      where source_batch_id=:'batch_id'::uuid
-      group by 1,2,3
-), dates as (select distinct usage_date from daily), base as (
-  select cp.source_batch_id,cp.user_id,d.usage_date
-      from dw_personalization.customer_profile cp
-      cross join dates d
-  where cp.source_batch_id=:'batch_id'::uuid
-), metrics as (
-  select b.source_batch_id,b.user_id,b.usage_date,
-         coalesce(sum(d.usage_mb) filter(where d.usage_date between b.usage_date-6 and b.usage_date),
-             0) trailing_7d_usage_mb,
-         coalesce(sum(d.usage_mb) filter(where d.usage_date between b.usage_date-29 and b.usage_date),
-             0) trailing_30d_usage_mb,
-         coalesce(sum(d.usage_mb) filter(where date_trunc('month',d.usage_date)=date_trunc('month',
-             b.usage_date)),0) month_to_date_usage_mb
-  from base b
-      left join daily d on d.source_batch_id=b.source_batch_id
-          and d.user_id=b.user_id
-          and d.usage_date between least(b.usage_date-29,
-              date_trunc('month',b.usage_date)::date) and b.usage_date
-  group by 1,2,3
-), category_usage as (
-  select b.source_batch_id,b.user_id,b.usage_date,c.content_category,sum(c.data_usage_mb) usage_mb
-  from base b
-      left join dw_personalization.content_usage c on c.source_batch_id=b.source_batch_id
-          and c.user_id=b.user_id
-          and c.usage_date between b.usage_date-29 and b.usage_date
-  group by 1,2,3,4
-), category_ratio as (
-  select *,usage_mb/nullif(sum(usage_mb) over(partition by source_batch_id,user_id,usage_date),0) ratio
-      from category_usage
-      where content_category is not null
-), category_features as (
-  select source_batch_id,user_id,usage_date,jsonb_object_agg(content_category,round(ratio,8)) ratios,
-         (array_agg(content_category order by usage_mb desc,content_category))[1] preferred_content_category
-  from category_ratio group by 1,2,3
+  select source_batch_id,user_id,usage_date,sum(data_usage_mb) total_usage_mb
+  from dw_personalization.content_usage group by 1,2,3
+), calculated as (
+  select daily.*,
+    sum(total_usage_mb) over(partition by user_id,date_trunc('month',usage_date)
+      order by usage_date rows between unbounded preceding and current row) month_to_date_usage_mb
+  from daily
 )
-insert into dm_personalization.customer_usage_feature_snapshot
-select m.source_batch_id,m.user_id,m.usage_date,m.trailing_7d_usage_mb,m.trailing_30d_usage_mb,
-       coalesce(f.ratios,'{}'::jsonb),f.preferred_content_category,m.month_to_date_usage_mb,
-       case when p.is_unlimited or p.data_limit_gb is null or p.data_limit_gb=0 then null
-            else m.month_to_date_usage_mb/(p.data_limit_gb*1024) end
-from metrics m
-    join dw_personalization.customer_profile cp on (cp.source_batch_id,
-    cp.user_id)=(m.source_batch_id,m.user_id)
-join dm_personalization.dim_plan p on p.plan_id=cp.current_plan_id
-left join category_features f on (f.source_batch_id,f.user_id,f.usage_date)=(m.source_batch_id,
-    m.user_id,m.usage_date);
+insert into dm_personalization.customer_daily_usage
+select x.source_batch_id,c.customer_key,d.date_key,x.total_usage_mb,x.month_to_date_usage_mb
+from calculated x
+join dm_personalization.dim_customer c on c.user_id=x.user_id
+join dm_personalization.dim_date d on d.calendar_date=x.usage_date;
+
+insert into dm_personalization.customer_monthly_usage
+select :'batch_id'::uuid,c.customer_key,to_char(d.calendar_month,'YYYYMMDD')::integer,
+  sum(u.data_usage_mb),sum(u.data_usage_mb)/count(distinct u.usage_date)
+from dw_personalization.content_usage u
+join dm_personalization.dim_customer c on c.user_id=u.user_id
+join dm_personalization.dim_date d on d.calendar_date=u.usage_date
+group by c.customer_key,d.calendar_month;
+
+insert into dm_personalization.customer_monthly_content_usage
+select :'batch_id'::uuid,c.customer_key,to_char(d.calendar_month,'YYYYMMDD')::integer,
+  k.content_key,sum(u.data_usage_mb)
+from dw_personalization.content_usage u
+join dm_personalization.dim_customer c on c.user_id=u.user_id
+join dm_personalization.dim_date d on d.calendar_date=u.usage_date
+join dm_personalization.dim_content k
+  on (k.content_category,k.content_detail)=(u.content_category,u.content_detail)
+group by c.customer_key,d.calendar_month,k.content_key;
+
+insert into dm_personalization.customer_service_current
+select :'batch_id'::uuid,c.customer_key,s.service_id,s.benefit_type,s.start_date
+from dw_personalization.user_services s
+join dm_personalization.dim_customer c on c.user_id=s.user_id
+where s.start_date<=:'reference_date'::date;
+
+insert into dm_personalization.customer_discount_current
+select distinct on(c.customer_key,d.discount_id)
+  :'batch_id'::uuid,c.customer_key,d.discount_id,d.start_date
+from dw_personalization.user_discounts d
+join dm_personalization.dim_customer c on c.user_id=d.user_id
+where d.status='ACTIVE' and d.start_date<=:'reference_date'::date
+  and (d.end_date is null or d.end_date>=:'reference_date'::date)
+order by c.customer_key,d.discount_id,d.start_date desc;
+
+insert into dm_personalization.customer_family_current
+select :'batch_id'::uuid,c.customer_key,c.family_key
+from dm_personalization.dim_customer c where c.family_key is not null;

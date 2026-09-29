@@ -1,64 +1,44 @@
--- 운영 DW의 가명 키 계산식은 생성기의 pseudonymize_key와 일치한다.
--- 접두사 + HMAC-SHA256(도메인 + ':' + 원본 ID)의 앞 24자리 16진수 대문자.
-insert into dw_operations.family (
-       source_batch_id,analysis_family_key,has_bundle,bundle_type,has_kt_internet,
-       internet_product_group,internet_contract_months,internet_status,bundle_discount_method,
-       total_discount_allocation_method,internet_benefit_discount_id)
-select source_batch_id,
-       'AFAM_'||upper(substr(encode(hmac('family:'||family_id,
-           current_setting('pipeline.pseudonymization_key'),'sha256'),'hex'),1,24)),
-       has_bundle,bundle_type,has_kt_internet,internet_product_group,internet_contract_months,
-       internet_status,bundle_discount_method,total_discount_allocation_method,
-       internet_benefit_discount_id
-from landing.raw_families f where source_batch_id=:'batch_id'::uuid;
+-- 운영 DW에는 HMAC 가명 키와 범주화된 속성만 저장한다.
+insert into dw_operations.families
+select :'batch_id'::uuid,audit.analysis_key('family',family_id,'AFAM_'),has_bundle,bundle_type,
+  has_kt_internet,internet_product_group,internet_contract_months,internet_status,
+  bundle_discount_method,total_discount_allocation_method,internet_benefit_discount_id
+from stg_families;
 
-insert into dw_operations.customer
-select source_batch_id,
-       'AUSR_'||upper(substr(encode(hmac('user:'||user_id,current_setting('pipeline.pseudonymization_key'),
-           'sha256'),'hex'),1,24)),
-       case when age between 8 and 12 then '8-12' when age between 13 and 18 then '13-18'
-            when age between 19 and 24 then '19-24' when age between 25 and 34 then '25-34'
-            when age between 35 and 49 then '35-49' when age between 50 and 64 then '50-64' else '65+' end,
-       gender,date_trunc('month',subscription_start_date)::date,
-       ((extract(year from current_setting('pipeline.reference_date')::date)
-         -extract(year from subscription_start_date))*12+
-        (extract(month from current_setting('pipeline.reference_date')::date)
-         -extract(month from subscription_start_date)))::integer,
-       current_plan_id,
-       case when family_id is null then null else 'AFAM_'||upper(substr(encode(hmac('family:'||family_id,
-           current_setting('pipeline.pseudonymization_key'),'sha256'),'hex'),1,24)) end
-from landing.raw_users where source_batch_id=:'batch_id'::uuid;
+insert into dw_operations.users
+select :'batch_id'::uuid,audit.analysis_key('user',user_id,'AUSR_'),
+  case when age between 8 and 12 then '8-12' when age between 13 and 18 then '13-18'
+       when age between 19 and 24 then '19-24' when age between 25 and 34 then '25-34'
+       when age between 35 and 49 then '35-49' when age between 50 and 64 then '50-64'
+       else '65+' end,
+  gender,subscription_start_date,current_plan_id,
+  case when family_id is null then null
+       else audit.analysis_key('family',family_id,'AFAM_') end
+from stg_users;
 
-insert into dw_operations.bundle_composition
-select source_batch_id,
-       'ABND_'||upper(substr(encode(hmac('bundle_composition:'||bundle_composition_id,
-           current_setting('pipeline.pseudonymization_key'),'sha256'),'hex'),1,24)),
-       'AFAM_'||upper(substr(encode(hmac('family:'||family_id,
-           current_setting('pipeline.pseudonymization_key'),'sha256'),'hex'),1,24)),
-       component_type,
-       case when user_id is null then null else 'AUSR_'||upper(substr(encode(hmac('user:'||user_id,
-           current_setting('pipeline.pseudonymization_key'),'sha256'),'hex'),1,24)) end,
-       component_role,status,date_trunc('month',start_date)::date,date_trunc('month',end_date)::date
-from landing.raw_bundle_discount_compositions
-    where source_batch_id=:'batch_id'::uuid;
+insert into dw_operations.bundle_discount_compositions
+select :'batch_id'::uuid,
+  audit.analysis_key('bundle_composition',bundle_composition_id,'ABND_'),
+  audit.analysis_key('family',family_id,'AFAM_'),component_type,
+  case when user_id is null then null else audit.analysis_key('user',user_id,'AUSR_') end,
+  component_role,status,start_date,end_date
+from stg_bundle_discount_compositions;
+
+insert into dw_operations.user_discounts
+select :'batch_id'::uuid,audit.analysis_key('user_discount',user_discount_id,'AUDS_'),
+  audit.analysis_key('user',user_id,'AUSR_'),
+  audit.analysis_key('bundle_composition',bundle_composition_id,'ABND_'),
+  discount_id,status,start_date,end_date
+from stg_user_discounts;
+
+insert into dw_operations.user_services
+select :'batch_id'::uuid,audit.analysis_key('user_service',user_service_id,'AUSRVS_'),
+  audit.analysis_key('user',user_id,'AUSR_'),service_id,benefit_type,start_date
+from stg_user_services;
 
 insert into dw_operations.content_usage
-select source_batch_id,'AUSR_'||upper(substr(encode(hmac('user:'||user_id,
-    current_setting('pipeline.pseudonymization_key'),'sha256'),'hex'),1,24)),usage_date,
-    content_category,content_detail,data_usage_mb
-from landing.raw_content_usage where source_batch_id=:'batch_id'::uuid;
-
-insert into dw_operations.user_discount
-select source_batch_id,
-       'AUSR_'||upper(substr(encode(hmac('user:'||user_id,current_setting('pipeline.pseudonymization_key'),
-           'sha256'),'hex'),1,24)),
-       'ABND_'||upper(substr(encode(hmac('bundle_composition:'||bundle_composition_id,
-           current_setting('pipeline.pseudonymization_key'),'sha256'),'hex'),1,24)),
-       discount_id,status,date_trunc('month',start_date)::date,date_trunc('month',end_date)::date
-from landing.raw_user_discounts where source_batch_id=:'batch_id'::uuid;
-
-insert into dw_operations.user_service
-select source_batch_id,'AUSR_'||upper(substr(encode(hmac('user:'||user_id,
-    current_setting('pipeline.pseudonymization_key'),'sha256'),'hex'),1,24)),service_id,
-    benefit_type,date_trunc('month',start_date)::date
-from landing.raw_user_services where source_batch_id=:'batch_id'::uuid;
+select :'batch_id'::uuid,audit.analysis_key('user',user_id,'AUSR_'),usage_date,
+  content_category,sum(data_usage_mb)
+from stg_content_usage
+where usage_date<=:'reference_date'::date-1
+group by user_id,usage_date,content_category;

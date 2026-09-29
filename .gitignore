@@ -10,10 +10,11 @@
 *.pem
 *.key
 
-# Reproducible synthetic data and local archives
+# Generated data and local-only document artifacts
 generator/data/
 generator/archive/
-docs/
+docs/archive/
+docs/tools/
 
 # Editor and operating-system files
 .vscode/
