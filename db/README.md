@@ -14,7 +14,7 @@ Data Lake (로컬 CSV 또는 향후 S3)
 
 | PostgreSQL 스키마 | 역할 |
 | --- | --- |
-| `audit` | 배치 상태, 파일 checksum·행 수, 품질 검사 결과 |
+| `audit` | 배치 상태, 파일 checksum·행 수, 워터마크, 품질 검사 결과 |
 | `landing` | 원본 ID와 값이 유지되는 배치별 `raw_*` 테이블. Data Landing 계층 |
 | `dw_common` | 요금제·할인·서비스·정책의 공통 기준 데이터 |
 | `dw_operations` | 가명화된 운영 분석 상세 데이터 |
@@ -42,3 +42,8 @@ Data Lake (로컬 CSV 또는 향후 S3)
 - **AWS 운영 전환**: 같은 원본 CSV를 S3 Data Lake에 보관하고, 실행 환경이 S3에서 파일을 내려받아 동일한 Landing SQL을 수행합니다.
 
 Landing 이후의 DW·DM SQL은 두 방식에서 공통으로 사용합니다.
+
+DW/DM의 `source_batch_id`는 적재 실행 계보이며 업무 PK에는 포함되지 않습니다.
+콘텐츠 사용량의 업무 grain은 사용자 × 사용 일자 × 콘텐츠 대분류 × 상세분류입니다.
+일일 증분은 이 grain의 날짜 파티션을 교체하므로 동일 파일 재실행과 완전 파티션
+정정에서 중복이 남지 않습니다.

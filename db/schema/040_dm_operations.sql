@@ -44,5 +44,8 @@ create table if not exists dm_operations.fact_daily_usage_summary (
     active_user_count integer not null,
     average_usage_mb numeric(18,3) not null,
     usage_event_count bigint not null,
-    primary key(source_batch_id,usage_date,plan_id,age_band_key,content_key)
+    primary key(usage_date,plan_id,age_band_key,content_key)
 );
+
+create index if not exists operations_summary_batch_idx
+    on dm_operations.fact_daily_usage_summary(source_batch_id);

@@ -15,4 +15,8 @@
 3. [`../quality/010_landing_raw.sql`](../quality/010_landing_raw.sql)이 사용자·가족·요금제·정책 등의 참조 관계, 사용량 grain 중복, 음수 사용량을 검사한다. 실패하면 DW/DM 생성으로 진행하지 않는다.
 4. [`../transform/common/010_load_master.sql`](../transform/common/010_load_master.sql)이 `plan`, `discount`, `additional_service` 및 혜택·정책 테이블을 `dw_common`에 UPSERT한다.
 
+증분 경로는 [`005_load_landing_master.psql`](005_load_landing_master.psql)로 13개
+스냅샷 파일을 초기화하고, [`020_load_incremental_content_usage.psql`](020_load_incremental_content_usage.psql)로
+하나 이상의 일별 `content_usage` 파티션과 파일 manifest를 같은 트랜잭션에 적재합니다.
+
 이후 같은 Raw 배치에서 [운영 DW](../transform/operations/dw/README.md)와 [개인화 DW](../transform/personalization/dw/README.md)가 갈라진다. 전체 트랜잭션 순서와 재실행 방식은 [SQL 실행](../../pipeline/SQL_EXECUTION.md)을 참고한다.

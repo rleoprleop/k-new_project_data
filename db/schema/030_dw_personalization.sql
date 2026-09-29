@@ -9,15 +9,15 @@ create table if not exists dw_personalization.customer_profile (
     subscription_start_date date not null,
     current_plan_id text not null references dw_common.plan(plan_id),
     family_id text,
-    primary key(source_batch_id,user_id)
+    primary key(user_id)
 );
 
 create table if not exists dw_personalization.customer_identity_bridge (
     source_batch_id uuid not null,
     user_id text not null,
     name text not null,
-    primary key(source_batch_id,user_id),
-    foreign key(source_batch_id,user_id) references dw_personalization.customer_profile(source_batch_id,user_id)
+    primary key(user_id),
+    foreign key(user_id) references dw_personalization.customer_profile(user_id)
 );
 
 create table if not exists dw_personalization.family (
@@ -32,7 +32,7 @@ create table if not exists dw_personalization.family (
     bundle_discount_method text,
     total_discount_allocation_method text,
     internet_benefit_discount_id text,
-    primary key(source_batch_id,family_id)
+    primary key(family_id)
 );
 
 create table if not exists dw_personalization.bundle_composition (
@@ -45,7 +45,7 @@ create table if not exists dw_personalization.bundle_composition (
     status text not null,
     start_date date not null,
     end_date date,
-    primary key(source_batch_id,bundle_composition_id)
+    primary key(bundle_composition_id)
 );
 
 create table if not exists dw_personalization.content_usage (
@@ -55,7 +55,8 @@ create table if not exists dw_personalization.content_usage (
     content_category text not null,
     content_detail text not null,
     data_usage_mb numeric(14,3) not null check(data_usage_mb>=0),
-    primary key(source_batch_id,user_id,usage_date,content_category,content_detail)
+    primary key(user_id,usage_date,content_category,content_detail),
+    foreign key(user_id) references dw_personalization.customer_profile(user_id)
 );
 
 create table if not exists dw_personalization.user_discount (
@@ -66,7 +67,7 @@ create table if not exists dw_personalization.user_discount (
     status text not null,
     start_date date not null,
     end_date date,
-    primary key(source_batch_id,user_id,bundle_composition_id,discount_id,start_date)
+    primary key(user_id,bundle_composition_id,discount_id,start_date)
 );
 
 create table if not exists dw_personalization.user_service (
@@ -75,11 +76,11 @@ create table if not exists dw_personalization.user_service (
     service_id text not null,
     benefit_type text not null,
     start_date date not null,
-    primary key(source_batch_id,user_id,service_id,benefit_type,start_date)
+    primary key(user_id,service_id,benefit_type,start_date)
 );
 
-create index if not exists personalization_usage_batch_date_idx on dw_personalization.content_usage(source_batch_id,
-    usage_date);
+create index if not exists personalization_usage_date_idx on dw_personalization.content_usage(usage_date);
+create index if not exists personalization_usage_batch_idx on dw_personalization.content_usage(source_batch_id);
 
 revoke all on schema dw_personalization from public;
 revoke all on dw_personalization.customer_identity_bridge from public;

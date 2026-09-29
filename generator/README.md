@@ -55,12 +55,38 @@ python src/kt_synthetic_data_generator.py --no-analysis-output
 | --- | --- |
 | `--n-users` | 생성할 사용자 수. 최소 10명 |
 | `--n-days` | 사용자별 사용량 생성 일수 |
+| `--reference-date` | 고객·혜택 스냅샷 기준일 |
+| `--usage-through-date` | 생성할 마지막 `usage_date`. 생략 시 기준일 전날 |
 | `--seed` | 재현용 난수 시드 |
 | `--suboptimal-ratio` | 의도적 비최적 요금제 사용자 비율 |
 | `--output-dir` | 원본 CSV 출력 경로 |
+| `--content-usage-layout` | `single`, `daily`, `both` 중 콘텐츠 사용량 저장 방식 |
+| `--content-user-batch-size` | `daily` 스트리밍 저장 시 한 번에 버퍼링할 사용자 수. 기본 100명 |
 | `--analysis-output-dir` | 가명화 분석 CSV 출력 경로 |
 | `--no-analysis-output` | 가명화 분석 CSV를 생성하지 않음 |
 | `--no-save` | 생성·검증만 수행하고 CSV를 저장하지 않음 |
+
+미래 사용량을 S3형 일별 파티션으로 미리 생성할 때는 고객 상태 기준일과
+사용량 종료일을 분리합니다.
+
+```powershell
+python src/kt_synthetic_data_generator.py `
+  --n-users 10000 `
+  --n-days 365 `
+  --reference-date 2026-09-29 `
+  --usage-through-date 2026-10-23 `
+  --content-usage-layout daily `
+  --no-analysis-output
+```
+
+일별 파일은 `data/generated/raw/content_usage/event_date=YYYY-MM-DD/part-000.csv`에
+저장됩니다. `daily`은 13개 스냅샷 CSV와 일별 콘텐츠 파일을 만들고,
+`both`는 기존 단일 `content_usage.csv`도 함께 만듭니다.
+
+`daily`와 `--no-analysis-output`을 함께 사용하면 콘텐츠 Fact는 사용자 묶음별로
+365일 전체 가중치와 월간 한도 상태를 계산한 뒤 날짜 파티션에 이어 씁니다. 생성
+규칙과 난수 순서는 단일 파일 방식과 같고, 전체 콘텐츠 Fact를 메모리에 보관하지
+않습니다.
 
 ## 문서
 

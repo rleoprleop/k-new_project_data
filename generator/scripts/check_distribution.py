@@ -78,10 +78,24 @@ def load_tables() -> dict[str, pd.DataFrame]:
     for name in TABLE_NAMES:
         path = DATA_DIR / f"{name}.csv"
         if not path.exists():
+            if name == "content_usage":
+                partition_paths = content_partition_paths()
+                if partition_paths:
+                    print(
+                        f"[INFO] content_usage 일별 파티션 {len(partition_paths):,}개를 "
+                        "스트리밍 검사합니다"
+                    )
+                    continue
             print(f"[WARN] 파일 없음: {path}")
             continue
         tables[name] = pd.read_csv(path, low_memory=False)
     return tables
+
+
+def content_partition_paths() -> list[Path]:
+    return sorted(
+        (DATA_DIR / "raw" / "content_usage").glob("event_date=*/part-*.csv")
+    )
 
 
 def value_distribution(df: pd.DataFrame, column: str, top_n: int = 30) -> None:
@@ -106,18 +120,27 @@ def numeric_distribution(df: pd.DataFrame, columns: list[str]) -> None:
 def check_output_schema(tables: dict[str, pd.DataFrame]) -> None:
     section("1. 최종 Output 스키마·테이블 현황")
     rows = []
+    partition_paths = content_partition_paths()
     for name in TABLE_NAMES:
         df = tables.get(name)
-        missing = [] if df is None else [col for col in EXPECTED_COLUMNS.get(name, []) if col not in df.columns]
+        partition_columns: list[str] = []
+        if name == "content_usage" and df is None and partition_paths:
+            partition_columns = list(pd.read_csv(partition_paths[0], nrows=0).columns)
+        actual_columns = list(df.columns) if df is not None else partition_columns
+        missing = [
+            col for col in EXPECTED_COLUMNS.get(name, [])
+            if col not in actual_columns
+        ]
         internal_leaks = (
             [] if name != "users" or df is None
             else sorted(INTERNAL_ONLY_USER_COLUMNS & set(df.columns))
         )
+        is_partitioned_content = name == "content_usage" and bool(partition_columns)
         rows.append({
             "table": name,
-            "loaded": df is not None,
-            "rows": len(df) if df is not None else 0,
-            "columns": len(df.columns) if df is not None else 0,
+            "loaded": df is not None or is_partitioned_content,
+            "rows": len(df) if df is not None else ("streamed" if is_partitioned_content else 0),
+            "columns": len(actual_columns),
             "missing_expected_columns": ", ".join(missing),
             "internal_only_columns_in_output": ", ".join(internal_leaks),
         })
@@ -150,6 +173,9 @@ def check_user_and_plan_distribution(tables: dict[str, pd.DataFrame]) -> None:
 
 def check_usage_distribution(tables: dict[str, pd.DataFrame]) -> None:
     if "content_usage" not in tables:
+        partition_paths = content_partition_paths()
+        if partition_paths:
+            check_partitioned_usage_distribution(partition_paths, tables)
         return
     content = tables["content_usage"].copy()
     content["data_usage_mb"] = pd.to_numeric(content["data_usage_mb"], errors="coerce")
@@ -176,6 +202,119 @@ def check_usage_distribution(tables: dict[str, pd.DataFrame]) -> None:
     print(monthly_gb.describe(percentiles=[0.01, 0.05, 0.25, 0.50, 0.75, 0.95, 0.99]).round(2).to_string())
     grain = ["user_id", "usage_date", "content_category", "content_detail"]
     print(f"\ncontent_usage 복합 grain 중복: {content.duplicated(grain).sum():,}건")
+
+
+def check_partitioned_usage_distribution(
+    partition_paths: list[Path], tables: dict[str, pd.DataFrame]
+) -> None:
+    user_ids = set(tables["users"]["user_id"].astype(str)) if "users" in tables else set()
+    category_parts: list[pd.DataFrame] = []
+    detail_parts: list[pd.DataFrame] = []
+    daily_values: list[np.ndarray] = []
+    user_total: dict[str, float] = {}
+    user_days: dict[str, int] = {}
+    total_rows = 0
+    duplicate_grain = 0
+    duplicate_ids = 0
+    invalid_user_refs = 0
+    null_rows = 0
+    non_positive_rows = 0
+    partition_dates: list[str] = []
+
+    for index, partition_path in enumerate(partition_paths, start=1):
+        frame = pd.read_csv(partition_path, low_memory=False)
+        missing = [
+            column for column in EXPECTED_COLUMNS["content_usage"]
+            if column not in frame.columns
+        ]
+        if missing:
+            raise ValueError(f"필수 컬럼 누락 {missing}: {partition_path}")
+        partition_date = partition_path.parent.name.removeprefix("event_date=")
+        actual_dates = frame["usage_date"].astype(str).unique()
+        if len(actual_dates) != 1 or actual_dates[0] != partition_date:
+            raise ValueError(f"파티션 날짜와 usage_date가 다릅니다: {partition_path}")
+        partition_dates.append(partition_date)
+
+        frame["data_usage_mb"] = pd.to_numeric(frame["data_usage_mb"], errors="coerce")
+        total_rows += len(frame)
+        null_rows += int(frame[EXPECTED_COLUMNS["content_usage"]].isna().any(axis=1).sum())
+        non_positive_rows += int((frame["data_usage_mb"] <= 0).sum())
+        duplicate_ids += int(frame["content_usage_id"].duplicated().sum())
+        duplicate_grain += int(frame.duplicated(
+            ["user_id", "usage_date", "content_category", "content_detail"]
+        ).sum())
+        if user_ids:
+            invalid_user_refs += int((~frame["user_id"].astype(str).isin(user_ids)).sum())
+
+        category_parts.append(
+            frame.groupby("content_category")["data_usage_mb"]
+            .agg(["count", "sum"])
+        )
+        detail_parts.append(
+            frame.groupby(["content_category", "content_detail"])["data_usage_mb"]
+            .agg(["count", "sum"])
+        )
+        daily = frame.groupby("user_id")["data_usage_mb"].sum()
+        daily_values.append(daily.to_numpy(dtype=float))
+        for user_id, amount in daily.items():
+            key = str(user_id)
+            user_total[key] = user_total.get(key, 0.0) + float(amount)
+            user_days[key] = user_days.get(key, 0) + 1
+
+        if index % 50 == 0 or index == len(partition_paths):
+            print(
+                f"[INFO] content partition check: {index:,}/{len(partition_paths):,}, "
+                f"rows={total_rows:,}"
+            )
+
+    parsed_dates = pd.to_datetime(pd.Series(partition_dates), errors="raise")
+    expected_dates = pd.date_range(parsed_dates.min(), parsed_dates.max(), freq="D")
+    continuous_dates = len(expected_dates) == len(parsed_dates) and set(expected_dates) == set(parsed_dates)
+    if not continuous_dates:
+        raise ValueError("content_usage 파티션 날짜가 연속적이지 않습니다")
+
+    category = pd.concat(category_parts).groupby(level=0).sum().sort_values("sum", ascending=False)
+    category["total_gb"] = category["sum"] / 1024
+    category["share_pct"] = category["sum"] / category["sum"].sum() * 100
+    category["mean"] = category["sum"] / category["count"]
+    detail = pd.concat(detail_parts).groupby(level=[0, 1]).sum().sort_values("sum", ascending=False)
+    detail["total_gb"] = detail["sum"] / 1024
+    detail["share_pct"] = detail["sum"] / detail["sum"].sum() * 100
+    detail["mean"] = detail["sum"] / detail["count"]
+    daily_array = np.concatenate(daily_values)
+    monthly_gb = pd.Series({
+        user_id: total / user_days[user_id] * 30 / 1024
+        for user_id, total in user_total.items()
+    })
+
+    section("3. 콘텐츠 사용량 및 파생 일별 사용량 — 파티션 스트리밍")
+    subsection("콘텐츠 카테고리별 사용량")
+    print(category[["count", "total_gb", "share_pct", "mean"]].round(2).to_string())
+    subsection("콘텐츠 상세분류별 사용량")
+    print(detail[["count", "total_gb", "share_pct", "mean"]].round(2).to_string())
+    subsection("content_usage에서 집계한 일별 사용량")
+    print(pd.Series(daily_array).describe(
+        percentiles=[0.01, 0.05, 0.25, 0.50, 0.75, 0.95, 0.99]
+    ).round(2).to_string())
+    print(
+        f"\n기간: {parsed_dates.min().date()} ~ {parsed_dates.max().date()} / "
+        f"고유 날짜 수: {parsed_dates.nunique():,} / 행 수: {total_rows:,}"
+    )
+    print("\n[사용자별 30일 환산 데이터 GB]")
+    print(monthly_gb.describe(
+        percentiles=[0.01, 0.05, 0.25, 0.50, 0.75, 0.95, 0.99]
+    ).round(2).to_string())
+    print("\n[파티션 무결성]")
+    print(pd.Series({
+        "연속 날짜": continuous_dates,
+        "필수값 누락 행": null_rows,
+        "0 이하 사용량 행": non_positive_rows,
+        "파티션 내 content_usage_id 중복": duplicate_ids,
+        "content_usage 복합 grain 중복": duplicate_grain,
+        "존재하지 않는 user_id 참조": invalid_user_refs,
+    }).to_string())
+    if any([null_rows, non_positive_rows, duplicate_ids, duplicate_grain, invalid_user_refs]):
+        raise ValueError("content_usage 파티션 무결성 검사에 실패했습니다")
 
 
 def bundle_eligibility(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -340,12 +479,12 @@ def check_bundle_distribution(tables: dict[str, pd.DataFrame]) -> None:
 
 
 def check_integrity(tables: dict[str, pd.DataFrame]) -> None:
-    required = {"users", "families", "plans", "bundle_discount_compositions", "discounts", "internet_bundle_discount_rules", "premium_family_discount_rules", "user_discounts", "content_usage"}
+    required = {"users", "families", "plans", "bundle_discount_compositions", "discounts", "internet_bundle_discount_rules", "premium_family_discount_rules", "user_discounts"}
     if not required.issubset(tables):
         return
     users, families, plans = tables["users"], tables["families"], tables["plans"]
     compositions, discounts = tables["bundle_discount_compositions"], tables["discounts"]
-    entitlements, content = tables["user_discounts"], tables["content_usage"]
+    entitlements = tables["user_discounts"]
     internet_rules = tables["internet_bundle_discount_rules"]
     premium_rules = tables["premium_family_discount_rules"]
     section("5. output FK·구성 정합성")
@@ -359,7 +498,6 @@ def check_integrity(tables: dict[str, pd.DataFrame]) -> None:
         "entitlement.discount_id → discounts": entitlements["discount_id"].isin(discounts["discount_id"]).all(),
         "internet rule.discount_id → discounts": internet_rules["discount_id"].isin(discounts["discount_id"]).all(),
         "premium rule.discount_id → discounts": premium_rules["discount_id"].isin(discounts["discount_id"]).all(),
-        "content.user_id → users": content["user_id"].isin(users["user_id"]).all(),
         "families.internet_contract_months 단위": families["internet_contract_months"].dropna().isin([12, 24, 36]).all(),
         "rules.contract_months 단위": pd.to_numeric(
             internet_rules["contract_months"], errors="coerce"
@@ -371,6 +509,8 @@ def check_integrity(tables: dict[str, pd.DataFrame]) -> None:
             families["bundle_discount_method"] == "TOTAL", "total_discount_allocation_method"
         ].isin(["EQUAL", "CONTRIBUTION"]).all(),
     }
+    if "content_usage" in tables:
+        checks["content.user_id → users"] = tables["content_usage"]["user_id"].isin(users["user_id"]).all()
     print(pd.Series(checks, name="PASS").to_string())
     bundled = families[families["has_bundle"].astype(str).str.lower().eq("true")]
     if not bundled.empty:

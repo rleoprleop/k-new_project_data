@@ -1,0 +1,34 @@
+-- PowerShell runner가 선택한 날짜 파티션을 하나의 COPY 입력과 manifest로 전달한다.
+delete from landing.raw_content_usage where source_batch_id=:'batch_id'::uuid;
+delete from audit.source_file where batch_id=:'batch_id'::uuid;
+
+create temp table incremental_source_file (
+    source_path text not null,
+    event_date date not null,
+    object_version text not null,
+    sha256 text not null,
+    row_count bigint not null check(row_count>=0)
+) on commit drop;
+
+create temp table incremental_content_usage (
+    partition_event_date date not null,
+    content_usage_id text not null,
+    user_id text not null,
+    usage_date date not null,
+    content_category text not null,
+    content_detail text not null,
+    data_usage_mb numeric(14,3) not null
+) on commit drop;
+
+\copy incremental_source_file(source_path,event_date,object_version,sha256,row_count) from :'source_manifest_csv' with (format csv, header true, encoding 'UTF8')
+\copy incremental_content_usage(partition_event_date,content_usage_id,user_id,usage_date,content_category,content_detail,data_usage_mb) from :'content_usage_csv' with (format csv, header true, encoding 'UTF8')
+
+insert into landing.raw_content_usage(
+    content_usage_id,user_id,usage_date,content_category,content_detail,data_usage_mb)
+select content_usage_id,user_id,usage_date,content_category,content_detail,data_usage_mb
+from incremental_content_usage;
+
+insert into audit.source_file(
+    batch_id,source_name,source_path,event_date,object_version,sha256,row_count)
+select :'batch_id'::uuid,'content_usage',source_path,event_date,object_version,sha256,row_count
+from incremental_source_file;

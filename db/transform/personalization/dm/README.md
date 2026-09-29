@@ -2,7 +2,9 @@
 
 `dm_personalization`은 사용자별 Star Schema와 추천용 Feature Snapshot을 만든다. `fact_customer_daily_usage`는 `dim_customer`, `dim_date`, `dim_plan`, `dim_content`와 함께 조회한다.
 
-Fact grain은 **배치 × 사용자 × 사용 일자 × 콘텐츠 대분류/상세분류**다. `customer_key`는 `dim_customer.user_id`와 연결되고, 날짜는 현재 `date_key` FK 대신 `usage_date` 값으로 연결한다.
+Fact grain은 **사용자 × 사용 일자 × 콘텐츠 대분류/상세분류**다.
+`source_batch_id`는 마지막 계산 실행의 계보이며 `customer_key`는
+`dim_customer.user_id`와 연결된다.
 
 | 측정값 | 의미 |
 | --- | --- |
@@ -13,7 +15,8 @@ Fact grain은 **배치 × 사용자 × 사용 일자 × 콘텐츠 대분류/상�
 
 `daily_total_usage_mb`와 `month_to_date_usage_mb`는 콘텐츠 행마다 반복되므로 전체 Fact에서 단순 합산하지 않는다.
 
-`customer_usage_feature_snapshot`의 grain은 **배치 × `user_id` × `feature_reference_date`**다. 배치의 관측 날짜마다 사용자별 Snapshot을 만든다.
+`customer_usage_feature_snapshot`의 grain은 **`user_id` × `feature_reference_date`**다.
+성공적으로 처리한 관측 날짜마다 사용자별 Snapshot을 만든다.
 
 | Feature | 계산 범위 |
 | --- | --- |

@@ -33,7 +33,7 @@ create table if not exists dm_personalization.dim_customer (
     age integer not null,
     gender text not null,
     subscription_start_date date not null,
-    unique(source_batch_id,user_id)
+    unique(user_id)
 );
 
 create table if not exists dm_personalization.fact_customer_daily_usage (
@@ -46,7 +46,7 @@ create table if not exists dm_personalization.fact_customer_daily_usage (
     daily_total_usage_mb numeric(18,3) not null,
     month_to_date_usage_mb numeric(18,3) not null,
     quota_utilization numeric(18,8),
-    primary key(source_batch_id,customer_key,usage_date,content_key)
+    primary key(customer_key,usage_date,content_key)
 );
 
 create table if not exists dm_personalization.customer_usage_feature_snapshot (
@@ -59,7 +59,16 @@ create table if not exists dm_personalization.customer_usage_feature_snapshot (
     preferred_content_category text,
     month_to_date_usage_mb numeric(18,3) not null,
     plan_quota_utilization numeric(18,8),
-    primary key(source_batch_id,user_id,feature_reference_date)
+    primary key(user_id,feature_reference_date)
 );
+
+create index if not exists personalization_daily_usage_date_idx
+    on dm_personalization.fact_customer_daily_usage(usage_date);
+create index if not exists personalization_daily_usage_batch_idx
+    on dm_personalization.fact_customer_daily_usage(source_batch_id);
+create index if not exists personalization_feature_date_idx
+    on dm_personalization.customer_usage_feature_snapshot(feature_reference_date);
+create index if not exists personalization_feature_batch_idx
+    on dm_personalization.customer_usage_feature_snapshot(source_batch_id);
 
 revoke all on schema dm_personalization from public;

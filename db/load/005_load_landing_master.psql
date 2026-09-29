@@ -1,0 +1,62 @@
+-- content_usage를 제외한 고객·가족·상품·정책 스냅샷을 적재한다.
+delete from landing.raw_user_services where source_batch_id=:'batch_id'::uuid;
+delete from landing.raw_user_discounts where source_batch_id=:'batch_id'::uuid;
+delete from landing.raw_premium_family_discount_rules where source_batch_id=:'batch_id'::uuid;
+delete from landing.raw_internet_bundle_discount_rules where source_batch_id=:'batch_id'::uuid;
+delete from landing.raw_discounts where source_batch_id=:'batch_id'::uuid;
+delete from landing.raw_plan_benefits where source_batch_id=:'batch_id'::uuid;
+delete from landing.raw_additional_services where source_batch_id=:'batch_id'::uuid;
+delete from landing.raw_plan_age_benefits where source_batch_id=:'batch_id'::uuid;
+delete from landing.raw_age_benefits where source_batch_id=:'batch_id'::uuid;
+delete from landing.raw_plans where source_batch_id=:'batch_id'::uuid;
+delete from landing.raw_bundle_discount_compositions where source_batch_id=:'batch_id'::uuid;
+delete from landing.raw_families where source_batch_id=:'batch_id'::uuid;
+delete from landing.raw_users where source_batch_id=:'batch_id'::uuid;
+delete from audit.source_file where batch_id=:'batch_id'::uuid;
+
+\copy landing.raw_users(user_id,name,age,gender,subscription_start_date,current_plan_id,family_id) from :'users_csv' with (format csv, header true, encoding 'UTF8')
+\copy landing.raw_families(family_id,has_bundle,bundle_type,has_kt_internet,internet_product_group,internet_contract_months,internet_status,bundle_discount_method,total_discount_allocation_method,internet_benefit_discount_id) from :'families_csv' with (format csv, header true, encoding 'UTF8')
+\copy landing.raw_bundle_discount_compositions(bundle_composition_id,family_id,component_type,user_id,component_role,status,start_date,end_date) from :'bundle_discount_compositions_csv' with (format csv, header true, encoding 'UTF8')
+\copy landing.raw_plans(plan_id,plan_name,plan_family,plan_category,monthly_fee,data_limit_gb,is_unlimited,throttle_speed,voice,sms,base_shared_data_gb,is_rollover,membership_tier,choice_tier,network_type,device_discount_lines,data_sharing_discount_lines,family_bundle_eligible) from :'plans_csv' with (format csv, header true, encoding 'UTF8')
+\copy landing.raw_age_benefits(age_benefit_id,benefit_name,min_age,max_age,includes_safety_box) from :'age_benefits_csv' with (format csv, header true, encoding 'UTF8')
+\copy landing.raw_plan_age_benefits(plan_age_benefit_id,plan_id,age_benefit_id,bonus_data_gb,bonus_shared_data_gb,bonus_voice_minutes,bonus_sms_count,bonus_video_minutes) from :'plan_age_benefits_csv' with (format csv, header true, encoding 'UTF8')
+\copy landing.raw_additional_services(service_id,service_name,service_category,normal_monthly_price) from :'additional_services_csv' with (format csv, header true, encoding 'UTF8')
+\copy landing.raw_plan_benefits(plan_benefit_id,plan_id,service_id,benefit_type,benefit_value,is_selectable,option_group,selection_count) from :'plan_benefits_csv' with (format csv, header true, encoding 'UTF8')
+\copy landing.raw_discounts(discount_id,policy_domain,benefit_code,discount_name) from :'discounts_csv' with (format csv, header true, encoding 'UTF8')
+\copy landing.raw_internet_bundle_discount_rules(internet_bundle_rule_id,discount_id,bundle_discount_method,rule_type,internet_product_group,contract_months,mobile_total_fee_min,mobile_total_fee_max,mobile_line_fee_min,mobile_line_fee_max,discount_target,allocation_method,discount_amount,discount_rate,effective_start_date,effective_end_date) from :'internet_bundle_discount_rules_csv' with (format csv, header true, encoding 'UTF8')
+\copy landing.raw_premium_family_discount_rules(premium_family_rule_id,discount_id,benefit_type,eligible_component_role,requires_internet,minimum_high_line_count,maximum_mobile_line_count,minimum_plan_fee,required_network_type,guardian_minimum_plan_fee,guardian_required_network_type,enrollment_min_age,enrollment_max_age,benefit_end_age,requires_legal_guardian,discount_rate,discount_amount,effective_start_date,effective_end_date) from :'premium_family_discount_rules_csv' with (format csv, header true, encoding 'UTF8')
+\copy landing.raw_user_discounts(user_discount_id,user_id,bundle_composition_id,discount_id,status,start_date,end_date) from :'user_discounts_csv' with (format csv, header true, encoding 'UTF8')
+\copy landing.raw_user_services(user_service_id,user_id,service_id,benefit_type,start_date) from :'user_services_csv' with (format csv, header true, encoding 'UTF8')
+
+insert into audit.source_file(batch_id,source_name,source_path,sha256)
+values
+(:'batch_id'::uuid,'users',:'users_csv',:'users_sha256'),
+(:'batch_id'::uuid,'families',:'families_csv',:'families_sha256'),
+(:'batch_id'::uuid,'bundle_discount_compositions',:'bundle_discount_compositions_csv',:'bundle_discount_compositions_sha256'),
+(:'batch_id'::uuid,'plans',:'plans_csv',:'plans_sha256'),
+(:'batch_id'::uuid,'age_benefits',:'age_benefits_csv',:'age_benefits_sha256'),
+(:'batch_id'::uuid,'plan_age_benefits',:'plan_age_benefits_csv',:'plan_age_benefits_sha256'),
+(:'batch_id'::uuid,'additional_services',:'additional_services_csv',:'additional_services_sha256'),
+(:'batch_id'::uuid,'plan_benefits',:'plan_benefits_csv',:'plan_benefits_sha256'),
+(:'batch_id'::uuid,'discounts',:'discounts_csv',:'discounts_sha256'),
+(:'batch_id'::uuid,'internet_bundle_discount_rules',:'internet_bundle_discount_rules_csv',:'internet_bundle_discount_rules_sha256'),
+(:'batch_id'::uuid,'premium_family_discount_rules',:'premium_family_discount_rules_csv',:'premium_family_discount_rules_sha256'),
+(:'batch_id'::uuid,'user_discounts',:'user_discounts_csv',:'user_discounts_sha256'),
+(:'batch_id'::uuid,'user_services',:'user_services_csv',:'user_services_sha256');
+
+update audit.source_file s set row_count=v.row_count from (values
+('users',(select count(*) from landing.raw_users where source_batch_id=:'batch_id'::uuid)),
+('families',(select count(*) from landing.raw_families where source_batch_id=:'batch_id'::uuid)),
+('bundle_discount_compositions',(select count(*) from landing.raw_bundle_discount_compositions where source_batch_id=:'batch_id'::uuid)),
+('plans',(select count(*) from landing.raw_plans where source_batch_id=:'batch_id'::uuid)),
+('age_benefits',(select count(*) from landing.raw_age_benefits where source_batch_id=:'batch_id'::uuid)),
+('plan_age_benefits',(select count(*) from landing.raw_plan_age_benefits where source_batch_id=:'batch_id'::uuid)),
+('additional_services',(select count(*) from landing.raw_additional_services where source_batch_id=:'batch_id'::uuid)),
+('plan_benefits',(select count(*) from landing.raw_plan_benefits where source_batch_id=:'batch_id'::uuid)),
+('discounts',(select count(*) from landing.raw_discounts where source_batch_id=:'batch_id'::uuid)),
+('internet_bundle_discount_rules',(select count(*) from landing.raw_internet_bundle_discount_rules where source_batch_id=:'batch_id'::uuid)),
+('premium_family_discount_rules',(select count(*) from landing.raw_premium_family_discount_rules where source_batch_id=:'batch_id'::uuid)),
+('user_discounts',(select count(*) from landing.raw_user_discounts where source_batch_id=:'batch_id'::uuid)),
+('user_services',(select count(*) from landing.raw_user_services where source_batch_id=:'batch_id'::uuid))
+) as v(source_name,row_count)
+where s.batch_id=:'batch_id'::uuid and s.source_name=v.source_name;

@@ -34,6 +34,7 @@ import json
 import math
 import os
 import random
+import shutil
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -2024,7 +2025,8 @@ def calculate_family_features(users: pd.DataFrame, families: pd.DataFrame) -> pd
 # 10. 일별 사용량 / 콘텐츠 분배
 # -----------------------------------------------------------------------------
 def generate_daily_usage(users: pd.DataFrame, plans: pd.DataFrame,
-                         n_days: int, seed: int) -> pd.DataFrame:
+                         n_days: int, seed: int,
+                         usage_through_date: pd.Timestamp | None = None) -> pd.DataFrame:
     """Generate observed daily use after quota-aware conservation behavior.
 
     Raw demand still comes from each user's latent usage profile. For finite
@@ -2033,7 +2035,11 @@ def generate_daily_usage(users: pd.DataFrame, plans: pd.DataFrame,
     exported partial month has realistic cumulative use and rollover state.
     """
     rng = np.random.default_rng(seed)
-    output_dates = pd.date_range(end=REFERENCE_DATE - pd.Timedelta(days=1), periods=n_days, freq="D")
+    usage_end = (
+        REFERENCE_DATE - pd.Timedelta(days=1)
+        if usage_through_date is None else pd.Timestamp(usage_through_date).normalize()
+    )
+    output_dates = pd.date_range(end=usage_end, periods=n_days, freq="D")
     first_month = output_dates[0].to_period("M").to_timestamp()
     warmup_start = first_month - pd.DateOffset(months=1)
     simulation_dates = pd.date_range(start=warmup_start, end=output_dates[-1], freq="D")
@@ -2208,22 +2214,33 @@ def detail_profile_for_user(rng: np.random.Generator, category: str,
     return sparse
 
 
-def generate_content_usage(users: pd.DataFrame, daily_usage: pd.DataFrame,
-                           services: pd.DataFrame, user_services: pd.DataFrame,
-                           n_days: int, seed: int) -> pd.DataFrame:
+CONTENT_USAGE_COLUMNS = [
+    "content_usage_id", "user_id", "usage_date", "content_category",
+    "content_detail", "data_usage_mb",
+]
+
+
+def iter_content_usage_by_user(users: pd.DataFrame, daily_usage: pd.DataFrame,
+                               services: pd.DataFrame, user_services: pd.DataFrame,
+                               seed: int) -> Iterable[Tuple[str, pd.DataFrame, pd.DataFrame]]:
+    """Yield one user's full-period content usage without changing RNG order.
+
+    Keeping the full date range together preserves the existing per-user detail
+    profile and the monthly quota stages already calculated in ``daily_usage``.
+    Consumers may batch the yielded frames for output without retaining the
+    complete content fact in memory.
+    """
     rng = np.random.default_rng(seed)
     service_cat = services.set_index("service_id")["service_category"].to_dict()
     selected_services = (
         user_services.groupby("user_id")["service_id"].apply(list).to_dict()
         if not user_services.empty else {}
     )
-    all_frames = []
     seq_start = 1
-
-    daily_groups = {uid: g.sort_values("usage_date") for uid, g in daily_usage.groupby("user_id", sort=False)}
+    daily_groups = daily_usage.groupby("user_id", sort=False)
 
     for u in users.itertuples(index=False):
-        g = daily_groups[u.user_id]
+        g = daily_groups.get_group(u.user_id).sort_values("usage_date")
         totals = g["total_data_mb"].to_numpy(dtype=float)
         weights = base_content_weights(int(u.age), str(u.occupation))
         selected = [str(sid) for sid in selected_services.get(str(u.user_id), [])]
@@ -2291,15 +2308,196 @@ def generate_content_usage(users: pd.DataFrame, daily_usage: pd.DataFrame,
             "content_detail": repeated_details[positive],
             "data_usage_mb": flattened[positive],
         })
-        all_frames.append(frame)
         seq_start += len(frame)
+        yield str(u.user_id), g, frame
+
+
+def generate_content_usage(users: pd.DataFrame, daily_usage: pd.DataFrame,
+                           services: pd.DataFrame, user_services: pd.DataFrame,
+                           n_days: int, seed: int) -> pd.DataFrame:
+    del n_days  # The date grain is defined by daily_usage.
+    all_frames = [
+        frame
+        for _, _, frame in iter_content_usage_by_user(
+            users, daily_usage, services, user_services, seed
+        )
+    ]
 
     return pd.concat(all_frames, ignore_index=True) if all_frames else pd.DataFrame(
-        columns=[
-            "content_usage_id", "user_id", "usage_date", "content_category",
-            "content_detail", "data_usage_mb",
-        ]
+        columns=CONTENT_USAGE_COLUMNS
     )
+
+
+def generate_partitioned_content_usage(
+    users: pd.DataFrame,
+    daily_usage: pd.DataFrame,
+    services: pd.DataFrame,
+    user_services: pd.DataFrame,
+    output_dir: Path,
+    seed: int,
+    user_batch_size: int = 100,
+) -> Dict[str, object]:
+    """Generate, validate, and write content usage without a full fact DataFrame."""
+    if user_batch_size < 1:
+        raise ValueError("user_batch_size must be >= 1")
+
+    partition_parent = output_dir / "raw"
+    partition_root = partition_parent / "content_usage"
+    staging_root = partition_parent / ".content_usage_staging"
+    previous_root = partition_parent / ".content_usage_previous"
+    partition_parent.mkdir(parents=True, exist_ok=True)
+    for stale_path in (staging_root, previous_root):
+        if stale_path.exists():
+            shutil.rmtree(stale_path)
+    staging_root.mkdir(parents=True, exist_ok=True)
+
+    expected_detail_category = {
+        detail: category
+        for category, details in CONTENT_DETAILS_BY_CATEGORY.items()
+        for detail in details
+    }
+    _assert(daily_usage["quota_stage"].isin(QUOTA_CONTENT_MULTIPLIERS).all(),
+            "daily_usage has invalid quota_stage")
+    expected_dates = sorted(daily_usage["usage_date"].astype(str).unique())
+
+    buffered_frames: List[pd.DataFrame] = []
+    user_category_records: List[dict] = []
+    category_totals = pd.Series(0.0, index=CONTENT_CATEGORIES, dtype=float)
+    row_count = 0
+    max_error = 0.0
+    processed_users = 0
+
+    def flush_frames() -> None:
+        if not buffered_frames:
+            return
+        chunk = pd.concat(buffered_frames, ignore_index=True)
+        for usage_date, date_frame in chunk.groupby("usage_date", sort=True):
+            partition_dir = staging_root / f"event_date={usage_date}"
+            partition_dir.mkdir(parents=True, exist_ok=True)
+            path = partition_dir / "part-000.csv"
+            is_new = not path.exists()
+            date_frame.to_csv(
+                path,
+                mode="w" if is_new else "a",
+                header=is_new,
+                index=False,
+                encoding="utf-8-sig" if is_new else "utf-8",
+            )
+        buffered_frames.clear()
+
+    try:
+        for user_id, user_daily, frame in iter_content_usage_by_user(
+            users, daily_usage, services, user_services, seed
+        ):
+            _assert(not frame.empty, f"No content usage generated for {user_id}")
+            _assert(frame["user_id"].eq(user_id).all(),
+                    f"content_usage user mismatch: {user_id}")
+            _assert(frame[CONTENT_USAGE_COLUMNS].notna().all().all(),
+                    f"content_usage contains null values: {user_id}")
+            _assert((frame["data_usage_mb"] > 0).all(),
+                    f"content_usage contains non-positive usage: {user_id}")
+            _assert(frame["content_category"].isin(CONTENT_CATEGORIES).all(),
+                    f"content_usage has invalid category: {user_id}")
+            _assert(frame["content_detail"].isin(expected_detail_category).all(),
+                    f"content_usage has invalid detail: {user_id}")
+            actual_parent = frame["content_detail"].map(expected_detail_category)
+            _assert(actual_parent.eq(frame["content_category"]).all(),
+                    f"content detail/category mismatch: {user_id}")
+            _assert(~frame.duplicated(
+                ["user_id", "usage_date", "content_category", "content_detail"]
+            ).any(), f"Duplicate content usage grain: {user_id}")
+
+            first_expected_id = f"CU{row_count + 1:09d}"
+            last_expected_id = f"CU{row_count + len(frame):09d}"
+            _assert(
+                frame["content_usage_id"].iloc[0] == first_expected_id
+                and frame["content_usage_id"].iloc[-1] == last_expected_id
+                and frame["content_usage_id"].nunique() == len(frame),
+                f"content_usage_id sequence mismatch: {user_id}",
+            )
+
+            expected = user_daily.set_index("usage_date")["total_data_mb"].sort_index()
+            actual = frame.groupby("usage_date")["data_usage_mb"].sum().sort_index()
+            _assert(expected.index.equals(actual.index),
+                    f"Daily/content dates mismatch: {user_id}")
+            user_max_error = float((expected - actual).abs().max())
+            max_error = max(max_error, user_max_error)
+            _assert(user_max_error <= 0.01,
+                    f"Daily/content usage mismatch for {user_id}, max error={user_max_error}")
+
+            by_category = (
+                frame.groupby("content_category")["data_usage_mb"]
+                .sum()
+                .reindex(CONTENT_CATEGORIES, fill_value=0.0)
+            )
+            category_totals = category_totals.add(by_category, fill_value=0.0)
+            user_category_records.append({
+                "user_id": user_id,
+                **{category: float(by_category[category]) for category in CONTENT_CATEGORIES},
+            })
+            buffered_frames.append(frame)
+            row_count += len(frame)
+            processed_users += 1
+
+            if len(buffered_frames) >= user_batch_size:
+                flush_frames()
+            if processed_users % 500 == 0 or processed_users == len(users):
+                print(
+                    f"content_usage progress: {processed_users:,}/{len(users):,} users, "
+                    f"{row_count:,} rows"
+                )
+        flush_frames()
+
+        actual_dates = sorted(
+            path.name.removeprefix("event_date=")
+            for path in staging_root.glob("event_date=*")
+            if path.is_dir()
+        )
+        _assert(actual_dates == expected_dates,
+                "content_usage partition dates do not match daily_usage dates")
+
+        if partition_root.exists():
+            partition_root.rename(previous_root)
+        try:
+            staging_root.rename(partition_root)
+        except Exception:
+            if previous_root.exists() and not partition_root.exists():
+                previous_root.rename(partition_root)
+            raise
+        if previous_root.exists():
+            shutil.rmtree(previous_root)
+
+        content_path = output_dir / "content_usage.csv"
+        if content_path.exists():
+            content_path.unlink()
+            print(f"removed single-file output: {content_path}")
+    except Exception:
+        if staging_root.exists():
+            shutil.rmtree(staging_root)
+        raise
+
+    content_by_user = (
+        pd.DataFrame(user_category_records)
+        .set_index("user_id")
+        .reindex(columns=CONTENT_CATEGORIES, fill_value=0.0)
+    )
+    print(
+        f"saved: {partition_root} ({len(expected_dates):,} partitions, "
+        f"{row_count:,} rows)"
+    )
+    return {
+        "content_by_user": content_by_user,
+        "category_totals": category_totals.sort_values(ascending=False),
+        "row_count": row_count,
+        "partition_count": len(expected_dates),
+        "first_usage_date": expected_dates[0],
+        "last_usage_date": expected_dates[-1],
+        "validation_messages": [
+            f"10. daily_usage == content_usage sum: PASS (max_error={max_error:.6f} MB)",
+            "11. content taxonomy + composite grain + sequential IDs: PASS",
+            f"content daily partitions: PASS ({len(expected_dates):,} dates, {row_count:,} rows)",
+        ],
+    }
 
 
 # -----------------------------------------------------------------------------
@@ -2314,6 +2512,20 @@ def calculate_user_features(users: pd.DataFrame, daily_usage: pd.DataFrame,
 
     content_sum = content_usage.groupby(["user_id", "content_category"])["data_usage_mb"].sum()
     top = content_sum.groupby(level=0).idxmax().apply(lambda x: x[1]) if len(content_sum) else pd.Series(dtype=object)
+    out["top_content_category"] = out["user_id"].map(top)
+    return out
+
+
+def calculate_user_features_from_content_totals(
+    users: pd.DataFrame,
+    daily_usage: pd.DataFrame,
+    content_by_user: pd.DataFrame,
+) -> pd.DataFrame:
+    out = users.copy()
+    avg_daily = daily_usage.groupby("user_id")["total_data_mb"].mean()
+    out["avg_daily_data_mb"] = out["user_id"].map(avg_daily).astype(float).round(2)
+    out["monthly_estimated_data_gb"] = (out["avg_daily_data_mb"] * 30.0 / 1024.0).round(2)
+    top = content_by_user.idxmax(axis=1)
     out["top_content_category"] = out["user_id"].map(top)
     return out
 
@@ -2722,7 +2934,9 @@ def run_all_validations(users: pd.DataFrame, families: pd.DataFrame,
                         user_services: pd.DataFrame,
                         internet_bundle_rules: pd.DataFrame,
                         premium_family_rules: pd.DataFrame,
-                        daily_usage: pd.DataFrame, content_usage: pd.DataFrame) -> None:
+                        daily_usage: pd.DataFrame,
+                        content_usage: Optional[pd.DataFrame],
+                        usage_validation_messages: Optional[Sequence[str]] = None) -> None:
     print("\n=== VALIDATION ===")
     messages: List[str] = []
     messages += validate_users(users, plans)
@@ -2732,7 +2946,12 @@ def run_all_validations(users: pd.DataFrame, families: pd.DataFrame,
         internet_bundle_rules, premium_family_rules
     )
     messages += validate_bundle_policy_rules(discounts, internet_bundle_rules, premium_family_rules)
-    messages += validate_usage(daily_usage, content_usage)
+    if content_usage is not None:
+        messages += validate_usage(daily_usage, content_usage)
+    elif usage_validation_messages is not None:
+        messages += list(usage_validation_messages)
+    else:
+        raise ValueError("content usage validation result is required")
     messages += validate_master_relations(
         plans, services, plan_benefits, age_benefits, plan_age_benefits, users, user_services
     )
@@ -2752,7 +2971,9 @@ def _print_ratio_table(series: pd.Series, title: str) -> None:
 
 def print_summary(users: pd.DataFrame, families: pd.DataFrame, plans: pd.DataFrame,
                   user_discounts: pd.DataFrame, user_services: pd.DataFrame,
-                  services: pd.DataFrame, content_usage: pd.DataFrame) -> None:
+                   services: pd.DataFrame, content_usage: Optional[pd.DataFrame],
+                   content_by_user: Optional[pd.DataFrame] = None,
+                   content_category_totals: Optional[pd.Series] = None) -> None:
     print("\n=== GENERATION SUMMARY ===")
     print(f"총 사용자 수: {len(users):,}")
     _print_ratio_table(users["age_group"], "연령대별 사용자")
@@ -2777,9 +2998,16 @@ def print_summary(users: pd.DataFrame, families: pd.DataFrame, plans: pd.DataFra
     print("\n[요금제별 평균 월 데이터 GB]")
     print(merged.groupby("plan_name")["monthly_estimated_data_gb"].mean().round(1).sort_values().to_string())
 
-    content_total = content_usage.groupby("content_category")["data_usage_mb"].sum().sort_values(ascending=False)
+    if content_category_totals is None:
+        if content_usage is None:
+            raise ValueError("content usage summary is required")
+        content_category_totals = (
+            content_usage.groupby("content_category")["data_usage_mb"]
+            .sum()
+            .sort_values(ascending=False)
+        )
     print("\n[콘텐츠별 총 데이터 사용량 GB]")
-    print((content_total / 1024.0).round(1).to_string())
+    print((content_category_totals / 1024.0).round(1).to_string())
 
     family_user_ratio = users["has_family"].mean() * 100
     print(f"\n가족이 있는 사용자 비율: {family_user_ratio:.1f}%")
@@ -2830,7 +3058,16 @@ def print_summary(users: pd.DataFrame, families: pd.DataFrame, plans: pd.DataFra
     unlimited = users["effective_data_unlimited"]
     fee = users["monthly_base_fee"]
     # 사용자별 콘텐츠 사용 비율
-    content_by_user = (content_usage.groupby(["user_id", "content_category"])["data_usage_mb"].sum().unstack(fill_value=0))
+    if content_by_user is None:
+        if content_usage is None:
+            raise ValueError("per-user content usage summary is required")
+        content_by_user = (
+            content_usage.groupby(["user_id", "content_category"])["data_usage_mb"]
+            .sum()
+            .unstack(fill_value=0)
+        )
+    else:
+        content_by_user = content_by_user.copy()
     content_by_user["total_data"] = content_by_user.sum(axis=1)
     content_by_user["video_ratio"] = (content_by_user["video"] / content_by_user["total_data"])
     video_ratio = (users["user_id"].map(content_by_user["video_ratio"]).fillna(0))
@@ -2849,7 +3086,11 @@ def print_summary(users: pd.DataFrame, families: pd.DataFrame, plans: pd.DataFra
     print(f"Case E Choice benefit underuse seeded: {case_e.sum()}")
 
 
-def save_csv(output_dir: Path, tables: Dict[str, pd.DataFrame]) -> None:
+def save_csv(output_dir: Path, tables: Dict[str, pd.DataFrame],
+             content_usage_layout: str = "single",
+             content_partitions_prepared: bool = False) -> None:
+    if content_usage_layout not in {"single", "daily", "both"}:
+        raise ValueError("content_usage_layout must be one of: single, daily, both")
     output_dir.mkdir(parents=True, exist_ok=True)
     # 이전 스키마에서는 출력 테이블이었다. 현재는 내부 생성·검증 데이터이므로
     # 생성 출력 디렉터리를 덮어쓸 때 알려진 잔존 파일만 제거한다.
@@ -2859,9 +3100,37 @@ def save_csv(output_dir: Path, tables: Dict[str, pd.DataFrame]) -> None:
             legacy_path.unlink()
             print(f"removed legacy output: {legacy_path}")
     for name, df in tables.items():
+        if name == "content_usage" and content_usage_layout == "daily":
+            continue
         path = output_dir / f"{name}.csv"
         df.to_csv(path, index=False, encoding="utf-8-sig")
         print(f"saved: {path} ({len(df):,} rows)")
+    content_path = output_dir / "content_usage.csv"
+    partition_root = output_dir / "raw" / "content_usage"
+    if content_partitions_prepared:
+        if content_usage_layout != "daily" or not partition_root.exists():
+            raise ValueError("prepared content partitions require daily layout")
+        if content_path.exists():
+            content_path.unlink()
+            print(f"removed single-file output: {content_path}")
+        return
+    if content_usage_layout == "daily" and content_path.exists():
+        content_path.unlink()
+        print(f"removed single-file output: {content_path}")
+    if content_usage_layout == "single" and partition_root.exists():
+        shutil.rmtree(partition_root)
+        print(f"removed partitioned output: {partition_root}")
+    if content_usage_layout in {"daily", "both"}:
+        if partition_root.exists():
+            shutil.rmtree(partition_root)
+        content_usage = tables["content_usage"].copy()
+        content_usage["usage_date"] = pd.to_datetime(content_usage["usage_date"]).dt.strftime("%Y-%m-%d")
+        for usage_date, frame in content_usage.groupby("usage_date", sort=True):
+            partition_dir = partition_root / f"event_date={usage_date}"
+            partition_dir.mkdir(parents=True, exist_ok=True)
+            path = partition_dir / "part-000.csv"
+            frame.to_csv(path, index=False, encoding="utf-8-sig")
+            print(f"saved: {path} ({len(frame):,} rows)")
 
 
 def pseudonymize_key(value: object, domain: str, pseudonymization_key: str) -> object:
@@ -3011,13 +3280,27 @@ def build_dataset(n_users: int = N_USERS, n_days: int = N_DAYS,
                   output_dir: str | Path = DEFAULT_OUTPUT_DIR,
                   analysis_output_dir: str | Path = DEFAULT_ANALYSIS_OUTPUT_DIR,
                   analysis_pseudonymization_key: str = SYNTHETIC_ANALYSIS_KEY,
-                  save: bool = True, save_analysis: bool = True) -> Dict[str, pd.DataFrame]:
+                  save: bool = True, save_analysis: bool = True,
+                  reference_date: str | pd.Timestamp = REFERENCE_DATE,
+                  usage_through_date: str | pd.Timestamp | None = None,
+                  content_usage_layout: str = "single",
+                  content_user_batch_size: int = 100) -> Dict[str, pd.DataFrame]:
+    global REFERENCE_DATE
+    REFERENCE_DATE = pd.Timestamp(reference_date).normalize()
+    usage_through = (
+        REFERENCE_DATE - pd.Timedelta(days=1)
+        if usage_through_date is None else pd.Timestamp(usage_through_date).normalize()
+    )
     if n_users < 10:
         raise ValueError("n_users must be >= 10")
     if n_days < 1:
         raise ValueError("n_days must be >= 1")
     if not 0 <= suboptimal_ratio <= 0.8:
         raise ValueError("suboptimal_ratio must be between 0 and 0.8")
+    if content_usage_layout not in {"single", "daily", "both"}:
+        raise ValueError("content_usage_layout must be one of: single, daily, both")
+    if content_user_batch_size < 1:
+        raise ValueError("content_user_batch_size must be >= 1")
 
     np.random.seed(seed)
     random.seed(seed)
@@ -3058,9 +3341,35 @@ def build_dataset(n_users: int = N_USERS, n_days: int = N_DAYS,
     )
     users = calculate_family_features(users, families)
 
-    daily_usage = generate_daily_usage(users, plans, n_days, seed + 11)
-    content_usage = generate_content_usage(users, daily_usage, services, user_services, n_days, seed + 12)
-    users = calculate_user_features(users, daily_usage, content_usage)
+    daily_usage = generate_daily_usage(
+        users, plans, n_days, seed + 11, usage_through_date=usage_through
+    )
+    stream_content_usage = (
+        save and content_usage_layout == "daily" and not save_analysis
+    )
+    content_stream_summary: Optional[Dict[str, object]] = None
+    content_usage: Optional[pd.DataFrame]
+    if stream_content_usage:
+        content_stream_summary = generate_partitioned_content_usage(
+            users,
+            daily_usage,
+            services,
+            user_services,
+            Path(output_dir),
+            seed + 12,
+            user_batch_size=content_user_batch_size,
+        )
+        users = calculate_user_features_from_content_totals(
+            users,
+            daily_usage,
+            content_stream_summary["content_by_user"],
+        )
+        content_usage = None
+    else:
+        content_usage = generate_content_usage(
+            users, daily_usage, services, user_services, n_days, seed + 12
+        )
+        users = calculate_user_features(users, daily_usage, content_usage)
 
     # 검증과 요약에 사용하는 내부 사용자 컬럼
     requested_user_columns = [
@@ -3101,8 +3410,28 @@ def build_dataset(n_users: int = N_USERS, n_days: int = N_DAYS,
         user_discounts, user_services,
         internet_bundle_rules, premium_family_rules,
         daily_usage, content_usage,
+        usage_validation_messages=(
+            content_stream_summary["validation_messages"]
+            if content_stream_summary is not None else None
+        ),
     )
-    print_summary(users, families, plans, user_discounts, user_services, services, content_usage)
+    print_summary(
+        users,
+        families,
+        plans,
+        user_discounts,
+        user_services,
+        services,
+        content_usage,
+        content_by_user=(
+            content_stream_summary["content_by_user"]
+            if content_stream_summary is not None else None
+        ),
+        content_category_totals=(
+            content_stream_summary["category_totals"]
+            if content_stream_summary is not None else None
+        ),
+    )
 
     tables = {
         "users": users_export,
@@ -3140,11 +3469,17 @@ def build_dataset(n_users: int = N_USERS, n_days: int = N_DAYS,
         "premium_family_discount_rules": premium_family_rules,
         "user_discounts": user_discounts,
         "user_services": user_services,
-        "content_usage": content_usage,
     }
+    if content_usage is not None:
+        tables["content_usage"] = content_usage
     if save:
         raw_output_path = Path(output_dir)
-        save_csv(raw_output_path, tables)
+        save_csv(
+            raw_output_path,
+            tables,
+            content_usage_layout=content_usage_layout,
+            content_partitions_prepared=stream_content_usage,
+        )
         if save_analysis:
             analysis_output_path = Path(analysis_output_dir)
             if raw_output_path.resolve() == analysis_output_path.resolve():
@@ -3159,9 +3494,25 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Generate KT-like synthetic mobile customer data")
     p.add_argument("--n-users", type=int, default=N_USERS)
     p.add_argument("--n-days", type=int, default=N_DAYS)
+    p.add_argument(
+        "--reference-date", default=REFERENCE_DATE.date().isoformat(),
+        help="Customer and benefit snapshot date (YYYY-MM-DD)",
+    )
+    p.add_argument(
+        "--usage-through-date",
+        help="Last generated usage_date (YYYY-MM-DD); defaults to reference-date minus one day",
+    )
     p.add_argument("--seed", type=int, default=SEED)
     p.add_argument("--suboptimal-ratio", type=float, default=SUBOPTIMAL_PLAN_RATIO)
     p.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    p.add_argument(
+        "--content-usage-layout", choices=["single", "daily", "both"], default="single",
+        help="Write content_usage as one CSV, daily partitions, or both",
+    )
+    p.add_argument(
+        "--content-user-batch-size", type=int, default=100,
+        help="Users buffered per write when daily content partitions are streamed",
+    )
     p.add_argument(
         "--analysis-output-dir", default=str(DEFAULT_ANALYSIS_OUTPUT_DIR),
         help="Directory for the pseudonymized analysis release CSVs",
@@ -3191,6 +3542,10 @@ def main() -> None:
         analysis_pseudonymization_key=args.analysis_pseudonymization_key,
         save=not args.no_save,
         save_analysis=not args.no_analysis_output,
+        reference_date=args.reference_date,
+        usage_through_date=args.usage_through_date,
+        content_usage_layout=args.content_usage_layout,
+        content_user_batch_size=args.content_user_batch_size,
     )
 
 

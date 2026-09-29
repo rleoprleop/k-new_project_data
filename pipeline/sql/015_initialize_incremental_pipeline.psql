@@ -5,21 +5,31 @@
 \ir ../../db/schema/040_dm_operations.sql
 \ir ../../db/schema/050_dm_personalization.sql
 
--- 이 문장은 데이터 트랜잭션 밖에서 실행한다. 이후 COPY나 DW/DM 생성이 롤백되어도
--- RUNNING 이력이 남아 PowerShell 오류 처리기가 실패 상태로 변경할 수 있다.
-select audit.start_pipeline_run(:'source_set_checksum', :'reference_date'::date) as batch_id \gset
+select pg_advisory_lock(hashtextextended('content_usage_daily',0));
+select exists(
+    select 1 from audit.pipeline_run
+    where pipeline_name='content_usage_daily'
+      and source_set_checksum=:'source_set_checksum'
+      and status='SUCCEEDED') as already_succeeded \gset
+\if :already_succeeded
+  \echo incremental dataset initialization already succeeded; no-op
+  select pg_advisory_unlock(hashtextextended('content_usage_daily',0));
+  \quit
+\endif
+
+select audit.start_pipeline_run(
+    :'source_set_checksum', :'reference_date'::date, 'content_usage_daily',
+    'DATASET_INITIALIZATION') as batch_id \gset
 
 begin;
 set local pipeline.batch_id = :'batch_id';
-
 set local pipeline.pseudonymization_key = :'pseudonymization_key';
 set local pipeline.reference_date = :'reference_date';
 
-\ir ../../db/load/010_load_landing_raw.psql
+\ir ../../db/load/005_load_landing_master.psql
 \ir ../../db/quality/010_landing_raw.sql
 
--- 전체 배치는 현재 상태를 완전히 교체한다. source_batch_id는 실행 계보이며
--- 더 이상 업무 키나 데이터 버전 키로 사용하지 않는다.
+-- 초기화는 기존 현재 상태와 워터마크를 모두 교체한다.
 delete from dm_personalization.customer_usage_feature_snapshot;
 delete from dm_personalization.fact_customer_daily_usage;
 delete from dm_personalization.dim_customer;
@@ -47,6 +57,7 @@ delete from dw_common.discount;
 delete from dw_common.additional_service;
 delete from dw_common.age_benefit;
 delete from dw_common.plan;
+delete from audit.ingestion_watermark where pipeline_name='content_usage_daily';
 
 \ir ../../db/transform/common/010_load_master.sql
 
@@ -60,17 +71,9 @@ delete from dw_common.plan;
 \ir ../../db/quality/operations/dm/010_quality.sql
 \ir ../../db/quality/personalization/dm/010_quality.sql
 
-update audit.pipeline_run set status='SUCCEEDED',ended_at=clock_timestamp(),error_message=null
-    where batch_id=:'batch_id'::uuid;
-insert into audit.ingestion_watermark(
-    pipeline_name,last_successful_event_date,last_successful_batch_id)
-select 'content_usage_daily',max(usage_date),:'batch_id'::uuid
-from landing.raw_content_usage
-where source_batch_id=:'batch_id'::uuid
-having max(usage_date) is not null
-on conflict(pipeline_name) do update
-set last_successful_event_date=excluded.last_successful_event_date,
-    last_successful_batch_id=excluded.last_successful_batch_id,
-    updated_at=clock_timestamp();
+update audit.pipeline_run
+set status='SUCCEEDED',ended_at=clock_timestamp(),error_message=null
+where batch_id=:'batch_id'::uuid;
 commit;
-\echo pipeline batch :batch_id succeeded
+select pg_advisory_unlock(hashtextextended('content_usage_daily',0));
+\echo incremental dataset initialization :batch_id succeeded

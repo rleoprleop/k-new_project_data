@@ -66,7 +66,8 @@ with daily as (
   from base b
       left join daily d on d.source_batch_id=b.source_batch_id
           and d.user_id=b.user_id
-          and d.usage_date between b.usage_date-29 and b.usage_date
+          and d.usage_date between least(b.usage_date-29,
+              date_trunc('month',b.usage_date)::date) and b.usage_date
   group by 1,2,3
 ), category_usage as (
   select b.source_batch_id,b.user_id,b.usage_date,c.content_category,sum(c.data_usage_mb) usage_mb

@@ -13,7 +13,7 @@ create table if not exists dw_operations.family (
     bundle_discount_method text,
     total_discount_allocation_method text,
     internet_benefit_discount_id text,
-    primary key(source_batch_id,analysis_family_key)
+    primary key(analysis_family_key)
 );
 
 create table if not exists dw_operations.customer (
@@ -25,9 +25,9 @@ create table if not exists dw_operations.customer (
     tenure_months integer not null check(tenure_months>=0),
     current_plan_id text not null references dw_common.plan(plan_id),
     analysis_family_key text,
-    primary key(source_batch_id,analysis_user_key),
-    foreign key(source_batch_id,analysis_family_key)
-        references dw_operations.family(source_batch_id,analysis_family_key)
+    primary key(analysis_user_key),
+    foreign key(analysis_family_key)
+        references dw_operations.family(analysis_family_key)
         deferrable initially deferred
 );
 
@@ -41,10 +41,10 @@ create table if not exists dw_operations.bundle_composition (
     status text not null check(status in ('ACTIVE','ENDED')),
     start_month date not null,
     end_month date,
-    primary key(source_batch_id,analysis_bundle_composition_key),
-    foreign key(source_batch_id,analysis_family_key)
-        references dw_operations.family(source_batch_id,analysis_family_key),
-    foreign key(source_batch_id,analysis_user_key) references dw_operations.customer(source_batch_id,analysis_user_key)
+    primary key(analysis_bundle_composition_key),
+    foreign key(analysis_family_key)
+        references dw_operations.family(analysis_family_key),
+    foreign key(analysis_user_key) references dw_operations.customer(analysis_user_key)
 );
 
 create table if not exists dw_operations.content_usage (
@@ -54,8 +54,8 @@ create table if not exists dw_operations.content_usage (
     content_category text not null,
     content_detail text not null,
     data_usage_mb numeric(14,3) not null check(data_usage_mb>=0),
-    primary key(source_batch_id,analysis_user_key,usage_date,content_category,content_detail),
-    foreign key(source_batch_id,analysis_user_key) references dw_operations.customer(source_batch_id,analysis_user_key)
+    primary key(analysis_user_key,usage_date,content_category,content_detail),
+    foreign key(analysis_user_key) references dw_operations.customer(analysis_user_key)
 );
 
 create table if not exists dw_operations.user_discount (
@@ -66,7 +66,7 @@ create table if not exists dw_operations.user_discount (
     status text not null,
     start_month date not null,
     end_month date,
-    primary key(source_batch_id,analysis_user_key,analysis_bundle_composition_key,discount_id,start_month)
+    primary key(analysis_user_key,analysis_bundle_composition_key,discount_id,start_month)
 );
 
 create table if not exists dw_operations.user_service (
@@ -75,8 +75,8 @@ create table if not exists dw_operations.user_service (
     service_id text not null references dw_common.additional_service(service_id),
     benefit_type text not null,
     start_month date not null,
-    primary key(source_batch_id,analysis_user_key,service_id,benefit_type,start_month)
+    primary key(analysis_user_key,service_id,benefit_type,start_month)
 );
 
-create index if not exists operations_usage_batch_date_idx on dw_operations.content_usage(source_batch_id,
-    usage_date);
+create index if not exists operations_usage_date_idx on dw_operations.content_usage(usage_date);
+create index if not exists operations_usage_batch_idx on dw_operations.content_usage(source_batch_id);
