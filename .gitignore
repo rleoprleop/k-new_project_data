@@ -20,3 +20,6 @@ docs/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local agent guidance
+AGENTS.md

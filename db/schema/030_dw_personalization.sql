@@ -23,7 +23,15 @@ create table if not exists dw_personalization.customer_identity_bridge (
 create table if not exists dw_personalization.family (
     source_batch_id uuid not null,
     family_id text not null,
-    attributes jsonb not null,
+    has_bundle boolean not null,
+    bundle_type text,
+    has_kt_internet boolean not null,
+    internet_product_group text,
+    internet_contract_months integer,
+    internet_status text,
+    bundle_discount_method text,
+    total_discount_allocation_method text,
+    internet_benefit_discount_id text,
     primary key(source_batch_id,family_id)
 );
 

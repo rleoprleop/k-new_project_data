@@ -34,6 +34,8 @@ Data Lake (로컬 CSV 또는 향후 S3)
 
 스키마를 준비한 뒤 `load → transform → quality` 순서로 실행합니다. 실제 트랜잭션 경계, 재실행, checksum과 오류 처리는 [`pipeline/SQL_EXECUTION.md`](../pipeline/SQL_EXECUTION.md)가 담당합니다.
 
+운영·개인화 DW의 `family`는 Raw 가족 속성을 JSONB 대신 명시 컬럼으로 저장합니다. `dw_common`의 정책 JSONB와 개인화 DM의 `content_category_usage_ratio` JSONB는 그대로 유지합니다.
+
 ## 개발과 운영의 Lake
 
 - **로컬 개발·PoC**: `generator/data/generated/*.csv`를 PostgreSQL `\copy`로 적재합니다.

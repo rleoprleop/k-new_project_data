@@ -1,6 +1,11 @@
 -- 개인화 DW의 이름은 접근이 제한된 식별 연결 테이블에만 한 번 저장한다.
-insert into dw_personalization.family
-select source_batch_id,family_id,to_jsonb(f)-'source_batch_id'-'family_id'
+insert into dw_personalization.family (
+       source_batch_id,family_id,has_bundle,bundle_type,has_kt_internet,internet_product_group,
+       internet_contract_months,internet_status,bundle_discount_method,
+       total_discount_allocation_method,internet_benefit_discount_id)
+select source_batch_id,family_id,has_bundle,bundle_type,has_kt_internet,internet_product_group,
+       internet_contract_months,internet_status,bundle_discount_method,
+       total_discount_allocation_method,internet_benefit_discount_id
     from landing.raw_families f
     where source_batch_id=:'batch_id'::uuid;
 

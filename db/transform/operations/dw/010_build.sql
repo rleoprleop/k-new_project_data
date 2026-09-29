@@ -1,10 +1,15 @@
 -- 운영 DW의 가명 키 계산식은 생성기의 pseudonymize_key와 일치한다.
 -- 접두사 + HMAC-SHA256(도메인 + ':' + 원본 ID)의 앞 24자리 16진수 대문자.
-insert into dw_operations.family
+insert into dw_operations.family (
+       source_batch_id,analysis_family_key,has_bundle,bundle_type,has_kt_internet,
+       internet_product_group,internet_contract_months,internet_status,bundle_discount_method,
+       total_discount_allocation_method,internet_benefit_discount_id)
 select source_batch_id,
        'AFAM_'||upper(substr(encode(hmac('family:'||family_id,
            current_setting('pipeline.pseudonymization_key'),'sha256'),'hex'),1,24)),
-       to_jsonb(f)-'source_batch_id'-'family_id'
+       has_bundle,bundle_type,has_kt_internet,internet_product_group,internet_contract_months,
+       internet_status,bundle_discount_method,total_discount_allocation_method,
+       internet_benefit_discount_id
 from landing.raw_families f where source_batch_id=:'batch_id'::uuid;
 
 insert into dw_operations.customer
