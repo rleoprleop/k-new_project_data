@@ -12,6 +12,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     POWERSHELL_TELEMETRY_OPTOUT=1 \
     POWERSHELL_UPDATECHECK=Off \
+    XDG_CACHE_HOME=/tmp/kt-nd/cache \
+    XDG_CONFIG_HOME=/tmp/kt-nd/config \
+    XDG_DATA_HOME=/tmp/kt-nd/data \
     PSModuleAnalysisCachePath=/tmp/powershell-module-analysis-cache \
     RDS_CA_PATH=/opt/certs/global-bundle.pem
 
