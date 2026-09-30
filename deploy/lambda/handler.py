@@ -184,7 +184,35 @@ def _stop_process(process):
         process.communicate()
 
 
-def _command(arguments, env, context, label, input_text=None, limit=880):
+def _database_diagnostic(returncode, stderr):
+    """Return a fixed hint only; never return any substring of private stderr."""
+    # psql: 2 means a lost/failed connection, 3 means an ON_ERROR_STOP SQL error.
+    # Do not classify SQL messages (which can contain source data) as connection errors.
+    if returncode != 2:
+        return "DB_QUERY_FAILED" if returncode == 3 else "DB_CLIENT_FAILED"
+    rules = (
+        ("DB_PASSWORD_MISSING", r"no password supplied"),
+        ("DB_AUTH_FAILED", r"password authentication failed|authentication failed for user"),
+        ("DB_ROLE_NOT_FOUND", r'role "[^"\n]*" does not exist'),
+        ("DB_DATABASE_NOT_FOUND", r'database "[^"\n]*" does not exist'),
+        ("DB_ACCESS_DENIED", r"no pg_hba\.conf entry|pg_hba\.conf rejects connection|permission denied for database"),
+        ("DB_DNS_FAILED", r"could not translate host name|could not resolve host name"),
+        ("DB_TLS_CA_FILE_ERROR", r"root certificate file .*does not exist|could not (?:read|load|open) root certificate file"),
+        ("DB_TLS_HOSTNAME_MISMATCH", r"server certificate .*does not match host name"),
+        ("DB_TLS_VERIFY_FAILED", r"certificate verify failed|certificate verification failed"),
+        ("DB_CONNECTION_REFUSED", r"connection refused"),
+        ("DB_CONNECT_TIMEOUT", r"timeout expired|connection timed out"),
+        ("DB_NETWORK_UNREACHABLE", r"network is unreachable|no route to host"),
+        ("DB_CONNECTION_CLOSED", r"server closed the connection unexpectedly|connection reset by peer"),
+        ("DB_TLS_FAILED", r"ssl error:|ssl syscall error:|server does not support ssl|could not establish ssl connection"),
+    )
+    for code, pattern in rules:
+        if re.search(pattern, stderr or "", re.IGNORECASE):
+            return code
+    return "DB_CONNECTION_FAILED_UNKNOWN"
+
+
+def _command(arguments, env, context, label, input_text=None, limit=880, diagnose_database=False):
     timeout = _budget(context, limit)
     process = subprocess.Popen(
         arguments, env=env, cwd=PROJECT_ROOT,
@@ -194,22 +222,26 @@ def _command(arguments, env, context, label, input_text=None, limit=880):
         start_new_session=os.name == "posix",
     )
     try:
-        stdout, _stderr = process.communicate(input=input_text, timeout=timeout)
+        stdout, stderr = process.communicate(input=input_text, timeout=timeout)
     except subprocess.TimeoutExpired:
         _stop_process(process)
-        raise PipelineError(f"{label} timed out; the subprocess group was terminated.") from None
+        diagnostic = " diagnostic=DB_COMMAND_TIMEOUT;" if diagnose_database else ""
+        raise PipelineError(f"{label} timed out;{diagnostic} the subprocess group was terminated.") from None
     if process.returncode:
         # Do not include stdout, stderr, arguments, or environment in exceptions.
-        raise PipelineError(f"{label} failed with exit code {process.returncode}; raw output is withheld to protect credentials and source data.")
+        diagnostic = f" diagnostic={_database_diagnostic(process.returncode, stderr)};" if diagnose_database else ""
+        raise PipelineError(f"{label} failed with exit code {process.returncode};{diagnostic} raw output is withheld to protect credentials and source data.")
     return stdout.strip()
 
 
 def _query(sql, env, context):
     read_env = env.copy()
+    # Stable English client messages allow fixed-code diagnostics without raw logs.
+    read_env["LC_ALL"] = "C"
     read_env["PGOPTIONS"] = "-c default_transaction_read_only=on -c statement_timeout=30000 -c lock_timeout=10000"
     return _command(
         ["psql", "-X", "-A", "-t", "--no-password", "-v", "ON_ERROR_STOP=1", "-d", CONNECTION_OPTIONS],
-        read_env, context, "Database verification", input_text=sql + "\n", limit=40,
+        read_env, context, "Database verification", input_text=sql + "\n", limit=40, diagnose_database=True,
     )
 
 

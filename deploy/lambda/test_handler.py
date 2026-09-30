@@ -123,6 +123,8 @@ class AdapterTests(unittest.TestCase):
         arguments, env = command.call_args.args[:2]
         self.assertIn("--no-password", arguments)
         self.assertIn("default_transaction_read_only=on", env["PGOPTIONS"])
+        self.assertEqual(env["LC_ALL"], "C")
+        self.assertTrue(command.call_args.kwargs["diagnose_database"])
         self.assertIn("\\gexec", command.call_args.kwargs["input_text"])
 
     def test_partition_listing_ignores_nested_versions_and_path_traversal(self):
@@ -166,6 +168,83 @@ class AdapterTests(unittest.TestCase):
         with patch.object(handler.subprocess, "Popen", return_value=process):
             with self.assertRaises(handler.PipelineError) as error:
                 handler._command(["mock-command"], {}, None, "Mock command")
+        self.assertNotIn(MOCK_PASSWORD, str(error.exception))
+        self.assertNotIn(MOCK_KEY, str(error.exception))
+        self.assertNotIn("diagnostic=", str(error.exception))
+
+    def test_database_connection_diagnostics_are_fixed_codes(self):
+        samples = (
+            ('fe_sendauth: no password supplied', "DB_PASSWORD_MISSING"),
+            ('FATAL: password authentication failed for user "mock-user"', "DB_AUTH_FAILED"),
+            ('FATAL: role "mock-user" does not exist', "DB_ROLE_NOT_FOUND"),
+            ('FATAL: database "mock_database" does not exist', "DB_DATABASE_NOT_FOUND"),
+            ('FATAL: no pg_hba.conf entry for host "192.0.2.1", user "mock-user", database "mock_database", SSL encryption', "DB_ACCESS_DENIED"),
+            ('could not translate host name "example.invalid" to address: Name or service not known', "DB_DNS_FAILED"),
+            ('root certificate file "/mock/ca.pem" does not exist', "DB_TLS_CA_FILE_ERROR"),
+            ('could not read root certificate file "/mock/ca.pem": Permission denied', "DB_TLS_CA_FILE_ERROR"),
+            ('server certificate for "example.invalid" does not match host name "other.invalid"', "DB_TLS_HOSTNAME_MISMATCH"),
+            ('SSL error: certificate verify failed', "DB_TLS_VERIFY_FAILED"),
+            ('connection to server at "example.invalid" (192.0.2.1), port 5432 failed: Connection refused', "DB_CONNECTION_REFUSED"),
+            ('connection to server at "example.invalid" (192.0.2.1), port 5432 failed: timeout expired', "DB_CONNECT_TIMEOUT"),
+            ('Connection timed out', "DB_CONNECT_TIMEOUT"),
+            ('Network is unreachable', "DB_NETWORK_UNREACHABLE"),
+            ('No route to host', "DB_NETWORK_UNREACHABLE"),
+            ('server closed the connection unexpectedly', "DB_CONNECTION_CLOSED"),
+            ('SSL error: unexpected eof while reading', "DB_TLS_FAILED"),
+            ('server does not support SSL, but SSL was required', "DB_TLS_FAILED"),
+            ('FATAL: unrecognized configuration parameter "mock_parameter"', "DB_CONNECTION_FAILED_UNKNOWN"),
+            ('알 수 없는 연결 오류', "DB_CONNECTION_FAILED_UNKNOWN"),
+            ('', "DB_CONNECTION_FAILED_UNKNOWN"),
+        )
+        for stderr, expected in samples:
+            with self.subTest(expected=expected, stderr=stderr):
+                self.assertEqual(handler._database_diagnostic(2, stderr), expected)
+
+    def test_non_connection_errors_are_not_classified_from_sql_data(self):
+        for returncode, expected in ((1, "DB_CLIENT_FAILED"), (3, "DB_QUERY_FAILED"), (-6, "DB_CLIENT_FAILED")):
+            with self.subTest(returncode=returncode):
+                self.assertEqual(handler._database_diagnostic(returncode, "password authentication failed"), expected)
+
+    def test_query_failure_exposes_only_diagnostic_not_private_output(self):
+        env = {"PGHOST": "example.invalid", "PGUSER": "mock-user", "PGDATABASE": "mock_database",
+               "PGPASSWORD": MOCK_PASSWORD, "KT_ND_ANALYSIS_PSEUDONYMIZATION_KEY": MOCK_KEY,
+               "LC_ALL": "ko_KR.UTF-8"}
+        private_output = " | ".join(env.values()) + " mock-private-csv-row"
+        for returncode, stderr, diagnostic in (
+                (2, 'FATAL: password authentication failed for user "mock-user"', "DB_AUTH_FAILED"),
+                (2, "unrecognized private error", "DB_CONNECTION_FAILED_UNKNOWN"),
+                (3, "password authentication failed", "DB_QUERY_FAILED")):
+            process = MagicMock(returncode=returncode)
+            process.communicate.return_value = (private_output, stderr + "\n" + private_output)
+            with self.subTest(diagnostic=diagnostic), patch.object(handler.subprocess, "Popen", return_value=process) as popen:
+                with self.assertRaises(handler.PipelineError) as error:
+                    handler._query("select 1;", env, None)
+            message = str(error.exception)
+            self.assertIn("diagnostic=" + diagnostic + ";", message)
+            for private_value in (*env.values(), "mock-private-csv-row", stderr):
+                self.assertNotIn(private_value, message)
+            child_env = popen.call_args.kwargs["env"]
+            self.assertEqual(child_env["LC_ALL"], "C")
+            self.assertIn("default_transaction_read_only=on", child_env["PGOPTIONS"])
+            self.assertEqual(env["LC_ALL"], "ko_KR.UTF-8")
+
+    def test_successful_query_does_not_log_stderr(self):
+        process = MagicMock(returncode=0)
+        process.communicate.return_value = ("1\n", MOCK_PASSWORD + MOCK_KEY)
+        with patch.object(handler.subprocess, "Popen", return_value=process), \
+                patch.object(handler.LOGGER, "error") as error_log, patch.object(handler.LOGGER, "info") as info_log:
+            self.assertEqual(handler._query("select 1;", {}, None), "1")
+        error_log.assert_not_called()
+        info_log.assert_not_called()
+
+    def test_query_timeout_has_fixed_diagnostic_and_stops_process_group(self):
+        process = MagicMock()
+        process.communicate.side_effect = subprocess.TimeoutExpired("mock", 1, output=MOCK_PASSWORD, stderr=MOCK_KEY)
+        with patch.object(handler.subprocess, "Popen", return_value=process), patch.object(handler, "_stop_process") as stop:
+            with self.assertRaises(handler.PipelineError) as error:
+                handler._query("select 1;", {}, None)
+        stop.assert_called_once_with(process)
+        self.assertIn("diagnostic=DB_COMMAND_TIMEOUT;", str(error.exception))
         self.assertNotIn(MOCK_PASSWORD, str(error.exception))
         self.assertNotIn(MOCK_KEY, str(error.exception))
 
@@ -263,6 +342,22 @@ class InvocationTests(unittest.TestCase):
         with patch.object(handler, "_aws_client", side_effect=RuntimeError(MOCK_PASSWORD)), self.assertRaises(handler.PipelineError) as error:
             handler.lambda_handler({"action": "check"}, None)
         self.assertNotIn(MOCK_PASSWORD, str(error.exception))
+
+    def test_failed_database_check_stops_before_s3_and_preserves_redaction(self):
+        process = MagicMock(returncode=2)
+        process.communicate.return_value = (MOCK_PASSWORD, 'FATAL: database "mock_database" does not exist\n' + MOCK_KEY)
+        with patch.object(handler.subprocess, "Popen", return_value=process), \
+                patch.object(handler, "_master_objects") as objects, patch.object(handler, "_pipeline") as pipeline, \
+                patch.object(handler.LOGGER, "error") as log:
+            with self.assertRaises(handler.PipelineError) as error:
+                handler.lambda_handler({"action": "check"}, None)
+        objects.assert_not_called()
+        pipeline.assert_not_called()
+        self.assertIn("diagnostic=DB_DATABASE_NOT_FOUND;", str(error.exception))
+        for private_value in (MOCK_PASSWORD, MOCK_KEY, "mock_database"):
+            self.assertNotIn(private_value, str(error.exception))
+            self.assertNotIn(private_value, str(log.call_args))
+        self.assertIn('"stage": "database_preflight"', log.call_args.args[0])
 
     def test_check_does_not_download_or_run_pipeline(self):
         with patch.object(handler, "_query", return_value="1"), \
