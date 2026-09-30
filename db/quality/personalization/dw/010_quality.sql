@@ -13,13 +13,21 @@ call audit.assert_zero(:'batch_id'::uuid,'personalization_dw_14_table_counts',$$
     ((select count(*) from dw_personalization.premium_family_discount_rules),(select count(*) from stg_premium_family_discount_rules)),
     ((select count(*) from dw_personalization.user_discounts),(select count(*) from stg_user_discounts)),
     ((select count(*) from dw_personalization.user_services),(select count(*) from stg_user_services)),
-    ((select count(*) from dw_personalization.content_usage),(select count(*) from stg_content_usage
-      where usage_date<=current_setting('pipeline.reference_date')::date-1))
+    ((select count(*) from dw_personalization.content_usage),
+      (select count(*) from stg_content_usage c join stg_users u on u.user_id=c.user_id
+        where c.usage_date between u.subscription_start_date
+          and current_setting('pipeline.reference_date')::date-1))
   ) x(actual,expected) where actual<>expected$$,
-  '13 master tables and cutoff-eligible content rows must match staging');
+  '13 master tables and eligible post-subscription content rows must match staging');
 call audit.assert_zero(:'batch_id'::uuid,'personalization_dw_name_preserved',$$
   select count(*) from dw_personalization.users u join stg_users s using(user_id)
   where u.name<>s.name$$,'users.name must be retained in personalization DW');
+call audit.assert_zero(:'batch_id'::uuid,'personalization_dw_pre_subscription_usage',$$
+  select count(*)
+  from dw_personalization.content_usage c
+  join dw_personalization.users u using(user_id)
+  where c.usage_date<u.subscription_start_date$$,
+  'personalization DW must exclude usage before subscription start');
 call audit.assert_zero(:'batch_id'::uuid,'personalization_dw_detail_grain',$$
   select count(*) from (select user_id,usage_date,content_category,content_detail,count(*)
     from dw_personalization.content_usage group by 1,2,3,4 having count(*)>1) x$$,

@@ -37,8 +37,9 @@ select :'batch_id'::uuid,audit.analysis_key('user_service',user_service_id,'AUSR
 from stg_user_services;
 
 insert into dw_operations.content_usage
-select :'batch_id'::uuid,audit.analysis_key('user',user_id,'AUSR_'),usage_date,
-  content_category,sum(data_usage_mb)
-from stg_content_usage
-where usage_date<=:'reference_date'::date-1
-group by user_id,usage_date,content_category;
+select :'batch_id'::uuid,audit.analysis_key('user',c.user_id,'AUSR_'),c.usage_date,
+  c.content_category,sum(c.data_usage_mb)
+from stg_content_usage c
+join stg_users u on u.user_id=c.user_id
+where c.usage_date between u.subscription_start_date and :'reference_date'::date-1
+group by c.user_id,c.usage_date,c.content_category;

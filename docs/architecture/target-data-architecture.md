@@ -8,6 +8,8 @@
 - 운영과 개인화는 별도 Lambda/실행 경로, 워터마크, n8n workflow, DB 계정을 사용합니다.
 - 현재 요금제만 사용하며 요금제 이력 스냅샷은 만들지 않습니다.
 - `subscription_start_date <= 기준일`을 가입자로 정의합니다. 취소는 없다고 가정합니다.
+- 사용량은 `usage_date >= subscription_start_date`인 행만 DW에 적재합니다. 가입일 이전
+  원본 행은 S3/임시 staging에서 삭제하지 않고 DW 적재 대상에서만 제외합니다.
 - 상세 사용량은 개인화만, category 사용량은 운영만 사용합니다.
 
 ## 흐름
