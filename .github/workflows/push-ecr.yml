@@ -23,6 +23,17 @@ jobs:
       PYTHONDONTWRITEBYTECODE: "1"
       DOCKER_BUILD_RECORD_UPLOAD: "false"
     steps:
+      - name: Check OIDC claims
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const token = await core.getIDToken('sts.amazonaws.com');
+            const claims = JSON.parse(
+              Buffer.from(token.split('.')[1], 'base64url').toString('utf8')
+            );
+            core.info(`aud=${claims.aud}`);
+            core.info(`sub=${claims.sub}`);
+            
       - name: Checkout
         uses: actions/checkout@v7
         with:
