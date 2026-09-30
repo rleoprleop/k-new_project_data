@@ -26,7 +26,6 @@ RUN test "$(uname -m)" = "x86_64" \
         libgcc \
         libicu \
         libstdc++ \
-        openssl-libs \
         postgresql18 \
         tar \
         tzdata \
