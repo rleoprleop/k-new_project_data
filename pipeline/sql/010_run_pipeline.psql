@@ -5,6 +5,7 @@
 \ir ../../db/schema/040_dm_operations.sql
 \ir ../../db/schema/050_dm_personalization.sql
 \ir ../../db/schema/060_ai_views_roles.sql
+\ir ../../db/schema/070_allow_open_ended_age_benefits.sql
 
 select pg_advisory_lock(hashtextextended('content_usage_daily',0));
 select audit.start_pipeline_run(:'source_set_checksum',:'reference_date'::date) as batch_id \gset

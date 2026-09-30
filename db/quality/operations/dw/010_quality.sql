@@ -14,6 +14,13 @@ call audit.assert_zero(:'batch_id'::uuid,'operations_dw_14_table_counts',$$
     ((select count(*) from dw_operations.user_discounts),(select count(*) from stg_user_discounts)),
     ((select count(*) from dw_operations.user_services),(select count(*) from stg_user_services))
   ) x(actual,expected) where actual<>expected$$,'13 master/current-state tables must match staging');
+call audit.assert_zero(:'batch_id'::uuid,'operations_dw_age_benefit_bounds_preserved',$$
+  select count(*) from dw_operations.age_benefits d
+  full join stg_age_benefits s using(age_benefit_id)
+  where d.age_benefit_id is null or s.age_benefit_id is null
+    or d.min_age is distinct from s.min_age
+    or d.max_age is distinct from s.max_age$$,
+  'age benefit bounds must match staging, including null for no upper bound');
 call audit.assert_zero(:'batch_id'::uuid,'operations_dw_usage_total',$$
   select case when (select coalesce(sum(data_usage_mb),0) from dw_operations.content_usage)=
     (select coalesce(sum(c.data_usage_mb),0)

@@ -26,7 +26,8 @@ create temp table stg_plans (
 ) on commit drop;
 create temp table stg_age_benefits (
   age_benefit_id text primary key, benefit_name text not null,
-  min_age numeric(5,1) not null, max_age numeric(5,1) not null,
+  -- max_age가 null이면 나이 상한이 없는 혜택이다.
+  min_age numeric(5,1) not null, max_age numeric(5,1),
   includes_safety_box boolean not null
 ) on commit drop;
 create temp table stg_plan_age_benefits (

@@ -4,6 +4,10 @@ CSV는 영구 Landing에 저장하지 않습니다. [`001_create_staging.sql`](0
 14개 `pg_temp.stg_*` 테이블을 만들고, 전체 배치 또는 초기화 스크립트가 `\copy`로 채웁니다.
 staging은 배치 트랜잭션이 끝나면 자동 삭제됩니다.
 
+`age_benefits.csv`의 빈 `max_age`는 나이 상한이 없다는 뜻입니다(예: 75세 이상).
+staging과 두 DW는 이를 NULL로 보존합니다. `min_age`는 필수이며, 상한이 있으면
+`max_age >= min_age`여야 합니다. staging 범위 검사와 두 DW의 NULL-safe 비교로 검증합니다.
+
 PowerShell 실행기는 CSV 폴더의 절대 경로를 psql 변수 `input_csv_directory`로 전달합니다.
 적재 SQL은 `\cd :input_csv_directory`로 클라이언트 작업 폴더를 지정한 뒤 고정 CSV 파일명을
 `\copy`에 사용합니다. `\copy` 자체는 psql 변수를 치환하지 않습니다. 감사용 원본 경로·체크섬

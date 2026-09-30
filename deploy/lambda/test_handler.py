@@ -1,5 +1,6 @@
 """Offline tests only: no AWS credentials, network calls, psql, or SQL execution."""
 
+import ast
 import logging
 import re
 import subprocess
@@ -98,6 +99,73 @@ class CsvPathTests(unittest.TestCase):
                 if line.startswith(r"\ir "):
                     with self.subTest(sql=path.name, include=line):
                         self.assertTrue((path.parent / line[4:].strip()).resolve().is_file())
+
+
+class AgeBenefitSchemaTests(unittest.TestCase):
+    """Offline schema/quality contracts; these do not execute PostgreSQL."""
+
+    root = Path(__file__).resolve().parents[2]
+    migration = "070_allow_open_ended_age_benefits.sql"
+
+    def sql(self, path):
+        return (self.root / path).read_text(encoding="utf-8")
+
+    def test_staging_allows_null_upper_bound_but_requires_lower_bound(self):
+        text = self.sql("db/load/001_create_staging.sql")
+        table = re.search(r"create temp table stg_age_benefits \((.*?)\) on commit drop;",
+                          text, re.DOTALL).group(1)
+        self.assertRegex(table, r"min_age numeric\(5,1\) not null")
+        self.assertRegex(table, r"max_age numeric\(5,1\),")
+
+    def test_migration_only_relaxes_both_dw_upper_bounds_atomically(self):
+        text = self.sql("db/schema/" + self.migration)
+        statements = re.sub(r"--[^\n]*", "", text).split(";")
+        statements = [" ".join(statement.split()) for statement in statements if statement.strip()]
+        self.assertEqual(statements, [
+            "begin",
+            "alter table dw_operations.age_benefits alter column max_age drop not null",
+            "alter table dw_personalization.age_benefits alter column max_age drop not null",
+            "commit",
+        ])
+
+    def test_every_entrypoint_applies_migration_before_loading(self):
+        for name in ("010_run_pipeline.psql", "015_initialize_incremental_pipeline.psql",
+                     "020_run_incremental_pipeline.psql"):
+            with self.subTest(entrypoint=name):
+                text = self.sql("pipeline/sql/" + name)
+                include = r"\ir ../../db/schema/" + self.migration
+                self.assertEqual(text.count(include), 1)
+                self.assertLess(text.index(r"\ir ../../db/schema/060_ai_views_roles.sql"),
+                                text.index(include))
+                self.assertLess(text.index(include), text.index("select pg_advisory_lock("))
+                self.assertLess(text.index(include), text.index("select audit.start_pipeline_run("))
+
+    def test_quality_accepts_absent_upper_bound_and_checks_null_preservation(self):
+        staging = self.sql("db/quality/010_staging_full.sql")
+        self.assertIn("'staging_age_benefit_range'", staging)
+        self.assertIn("where max_age is not null and max_age<min_age", staging)
+        for domain in ("operations", "personalization"):
+            with self.subTest(domain=domain):
+                text = self.sql(f"db/quality/{domain}/dw/010_quality.sql")
+                self.assertIn(f"'{domain}_dw_age_benefit_bounds_preserved'", text)
+                self.assertIn(f"from dw_{domain}.age_benefits d", text)
+                self.assertIn("full join stg_age_benefits s using(age_benefit_id)", text)
+                self.assertIn("d.age_benefit_id is null or s.age_benefit_id is null", text)
+                self.assertIn("d.min_age is distinct from s.min_age", text)
+                self.assertIn("d.max_age is distinct from s.max_age", text)
+
+    def test_generator_keeps_open_ended_senior_benefit(self):
+        # Inspect literal master definitions without importing/running the generator.
+        tree = ast.parse(self.sql("generator/src/kt_synthetic_data_generator.py"))
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == "create_age_benefit_master")
+        rows = next(ast.literal_eval(node.value) for node in function.body
+                    if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == "rows"
+                            for target in node.targets))
+        senior = next(row for row in rows if row[0] == "AB40")
+        self.assertEqual(senior[2], 75)
+        self.assertIsNone(senior[3])
 
 
 class EventTests(unittest.TestCase):

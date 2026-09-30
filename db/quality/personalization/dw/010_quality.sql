@@ -19,6 +19,13 @@ call audit.assert_zero(:'batch_id'::uuid,'personalization_dw_14_table_counts',$$
           and current_setting('pipeline.reference_date')::date-1))
   ) x(actual,expected) where actual<>expected$$,
   '13 master tables and eligible post-subscription content rows must match staging');
+call audit.assert_zero(:'batch_id'::uuid,'personalization_dw_age_benefit_bounds_preserved',$$
+  select count(*) from dw_personalization.age_benefits d
+  full join stg_age_benefits s using(age_benefit_id)
+  where d.age_benefit_id is null or s.age_benefit_id is null
+    or d.min_age is distinct from s.min_age
+    or d.max_age is distinct from s.max_age$$,
+  'age benefit bounds must match staging, including null for no upper bound');
 call audit.assert_zero(:'batch_id'::uuid,'personalization_dw_name_preserved',$$
   select count(*) from dw_personalization.users u join stg_users s using(user_id)
   where u.name<>s.name$$,'users.name must be retained in personalization DW');

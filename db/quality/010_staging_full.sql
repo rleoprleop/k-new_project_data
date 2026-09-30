@@ -1,4 +1,8 @@
 -- 영구 저장 전에 세션 staging의 참조 무결성을 검증한다.
+call audit.assert_zero(:'batch_id'::uuid,'staging_age_benefit_range',$$
+  select count(*) from stg_age_benefits
+  where max_age is not null and max_age<min_age$$,
+  'age benefit upper bound must be absent or at least the lower bound');
 call audit.assert_zero(:'batch_id'::uuid,'staging_users_plan_fk',$$
   select count(*) from stg_users u left join stg_plans p on p.plan_id=u.current_plan_id
   where p.plan_id is null$$,'users.current_plan_id must reference plans');

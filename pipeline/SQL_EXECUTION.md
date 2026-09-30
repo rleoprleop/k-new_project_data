@@ -2,7 +2,7 @@
 
 ## 실행 순서
 
-1. `db/schema/001~060`이 audit, 두 DW, 두 DM, AI View와 역할을 정의합니다.
+1. `db/schema/001~060`이 audit, 두 DW, 두 DM, AI View와 역할을 정의하고, `070`이 연령 혜택의 NULL 상한을 허용합니다.
 2. `db/load/*staging*`이 CSV를 세션 임시 테이블로 읽습니다.
 3. `db/quality/010_staging_full.sql` 또는 증분 검사가 원본 관계를 확인합니다.
 4. 운영/개인화 DW 변환을 각각 수행합니다.
@@ -23,3 +23,20 @@
 
 입력 checksum이 이미 성공한 배치는 no-op입니다. 증분은 워터마크 다음 날짜부터 연속이어야
 하고, 정정은 워터마크 이하 날짜만 허용합니다. 정정 시 해당 월의 영향 집계를 교체합니다.
+
+## 연령 혜택 상한 마이그레이션
+
+`db/schema/070_allow_open_ended_age_benefits.sql`은 두 DW의 `age_benefits.max_age`에서
+NOT NULL 제약만 제거합니다. CSV의 빈 값은 상한 없는 연령 구간이며 임의의 숫자로 치환하지
+않습니다. 기존 생성 DDL은 유지하고, 전체·초기화·증분/정정 진입점 모두 `060` 다음에 `070`을
+적용합니다. 기존 DB와 새 DB에 동일하게 적용되며 이미 nullable인 경우도 재실행 가능합니다.
+
+행 삭제·데이터 변환·타입 변경은 없습니다. 조회 소비자는 NULL을 상한 없음으로 해석해야 합니다.
+마이그레이션은 적재 트랜잭션 전에 별도로 커밋되므로 이후 적재가 실패해도 스키마 변경은 남습니다.
+이미 데이터가 있는 DB의 마이그레이션을 위해 초기화를 실행하지 마세요.
+
+현재처럼 기준 CSV 적재가 실패하여 DW/DM이 비어 있는 경우에는 새 이미지를 배포한 뒤 같은
+`initialize` 이벤트를 재실행할 수 있습니다. S3 파일 변경이나 테이블 삭제는 필요하지 않습니다.
+실제 DB 검증은 사용자가 수행하며, 요청 배치의 `SUCCEEDED`와 품질 실패 행 0개를 함께 확인합니다.
+추가된 규칙은 `staging_age_benefit_range`, `operations_dw_age_benefit_bounds_preserved`,
+`personalization_dw_age_benefit_bounds_preserved`입니다. 실패한 배치의 품질 기록은 롤백될 수 있습니다.
