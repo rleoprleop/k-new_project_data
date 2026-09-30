@@ -63,7 +63,8 @@ create temp table stg_premium_family_discount_rules (
   minimum_high_line_count integer, maximum_mobile_line_count integer,
   minimum_plan_fee numeric(12,2), required_network_type text,
   guardian_minimum_plan_fee numeric(12,2), guardian_required_network_type text,
-  enrollment_min_age integer, enrollment_max_age integer, benefit_end_age integer,
+  -- CSV의 0.0 같은 정수 소수 표기를 보존해 읽고 품질 검사 후 DW에서 integer로 변환한다.
+  enrollment_min_age numeric, enrollment_max_age numeric, benefit_end_age numeric,
   requires_legal_guardian boolean not null, discount_rate numeric(8,5),
   discount_amount numeric(12,2), effective_start_date date, effective_end_date date
 ) on commit drop;

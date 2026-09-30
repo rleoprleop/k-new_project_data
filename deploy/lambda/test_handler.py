@@ -168,6 +168,78 @@ class AgeBenefitSchemaTests(unittest.TestCase):
         self.assertIsNone(senior[3])
 
 
+class PremiumFamilyAgeTests(unittest.TestCase):
+    """Offline checks for decimal integer notation at the CSV/staging boundary."""
+
+    root = Path(__file__).resolve().parents[2]
+    age_columns = ("enrollment_min_age", "enrollment_max_age", "benefit_end_age")
+    columns = (
+        "source_batch_id", "premium_family_rule_id", "discount_id", "benefit_type",
+        "eligible_component_role", "requires_internet", "minimum_high_line_count",
+        "maximum_mobile_line_count", "minimum_plan_fee", "required_network_type",
+        "guardian_minimum_plan_fee", "guardian_required_network_type",
+        "enrollment_min_age", "enrollment_max_age", "benefit_end_age",
+        "requires_legal_guardian", "discount_rate", "discount_amount",
+        "effective_start_date", "effective_end_date",
+    )
+
+    def sql(self, path):
+        return (self.root / path).read_text(encoding="utf-8")
+
+    def test_only_staging_age_columns_accept_unrounded_numeric_values(self):
+        text = self.sql("db/load/001_create_staging.sql")
+        table = re.search(r"create temp table stg_premium_family_discount_rules \((.*?)\) on commit drop;",
+                          text, re.DOTALL).group(1)
+        for column in self.age_columns:
+            with self.subTest(column=column):
+                self.assertRegex(table, rf"\b{column} numeric,")
+        for column in ("minimum_high_line_count", "maximum_mobile_line_count"):
+            self.assertRegex(table, rf"\b{column} integer,")
+        for name in ("020_dw_operations.sql", "030_dw_personalization.sql"):
+            text = self.sql("db/schema/" + name)
+            for column in self.age_columns:
+                with self.subTest(schema=name, column=column):
+                    self.assertRegex(text, rf"\b{column} integer,")
+
+    def test_quality_checks_all_three_ages_before_any_integer_cast(self):
+        text = self.sql("db/quality/010_staging_full.sql")
+        rule = re.search(r"'staging_premium_family_age_integer',\$\$(.*?)\$\$",
+                         text, re.DOTALL).group(1)
+        self.assertIn("from stg_premium_family_discount_rules r", rule)
+        for column in self.age_columns:
+            self.assertIn(f"(r.{column})", rule)
+        self.assertIn("where age_value is not null", rule)
+        self.assertIn("age_value not between -2147483648 and 2147483647", rule)
+        self.assertIn("age_value<>trunc(age_value)", rule)
+        self.assertNotIn("::integer", rule)
+
+    def test_both_dw_inserts_cast_only_validated_ages_and_keep_other_fields(self):
+        text = self.sql("db/transform/common/010_load_master.sql")
+        for domain in ("operations", "personalization"):
+            with self.subTest(domain=domain):
+                statement = re.search(
+                    rf"insert into dw_{domain}\.premium_family_discount_rules \((.*?)\)\s*"
+                    r"select (.*?) from stg_premium_family_discount_rules r;",
+                    text, re.DOTALL,
+                )
+                self.assertIsNotNone(statement)
+                targets = tuple(column.strip() for column in statement.group(1).split(","))
+                expressions = tuple(expression.strip() for expression in statement.group(2).split(","))
+                self.assertEqual(targets, self.columns)
+                expected = (":'batch_id'::uuid",) + tuple(
+                    "r." + column + ("::integer" if column in self.age_columns else "")
+                    for column in self.columns[1:]
+                )
+                self.assertEqual(expressions, expected)
+
+    def test_master_entrypoints_check_staging_before_dw_conversion(self):
+        for name in ("010_run_pipeline.psql", "015_initialize_incremental_pipeline.psql"):
+            with self.subTest(entrypoint=name):
+                text = self.sql("pipeline/sql/" + name)
+                self.assertLess(text.index(r"\ir ../../db/quality/010_staging_full.sql"),
+                                text.index(r"\ir ../../db/transform/common/010_load_master.sql"))
+
+
 class EventTests(unittest.TestCase):
     def test_initialization_requires_explicit_boolean_confirmation(self):
         for confirmation in (None, False, "true", 1):

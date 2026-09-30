@@ -1,4 +1,14 @@
 -- 영구 저장 전에 세션 staging의 참조 무결성을 검증한다.
+call audit.assert_zero(:'batch_id'::uuid,'staging_premium_family_age_integer',$$
+  select count(*) from stg_premium_family_discount_rules r
+  where exists (
+    select 1 from (values
+      (r.enrollment_min_age),(r.enrollment_max_age),(r.benefit_end_age)
+    ) ages(age_value)
+    where age_value is not null
+      and (age_value not between -2147483648 and 2147483647
+        or age_value<>trunc(age_value))
+  )$$,'premium family ages must be null or exact values within the integer range');
 call audit.assert_zero(:'batch_id'::uuid,'staging_age_benefit_range',$$
   select count(*) from stg_age_benefits
   where max_age is not null and max_age<min_age$$,
