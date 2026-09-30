@@ -1,0 +1,20 @@
+# 기본적으로 모든 파일 제외
+**
+
+# 실행 코드만 허용
+!Dockerfile
+!db/
+!db/**
+!pipeline/
+!pipeline/**
+!deploy/
+!deploy/lambda/
+!deploy/lambda/handler.py
+
+# 허용된 폴더 안에서도 제외
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/__pycache__/
+**/*.pyc

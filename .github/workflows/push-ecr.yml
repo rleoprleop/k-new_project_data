@@ -1,0 +1,94 @@
+name: Build and push Lambda image
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: kt-nd-ecr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Run offline Handler tests
+        run: python -B -m unittest discover -s deploy/lambda -p "test_handler.py" -v
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image without pushing
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          load: true
+          push: false
+          tags: kt-nd-pipeline:build-check
+
+      - name: Check image as a read-only non-root container without network
+        run: |
+          docker run --rm --network none --read-only --user 1000:1000 \
+            --tmpfs /tmp:rw,nosuid,size=512m,mode=1777 \
+            --entrypoint /var/lang/bin/python \
+            kt-nd-pipeline:build-check \
+            -c 'import json, handler; result = handler.lambda_handler({"action": "health"}, None); assert result["status"] == "SUCCEEDED"; print(json.dumps(result))'
+
+      - name: Check AWS variable configuration
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          test -n "$AWS_REGION"
+          test -n "$AWS_ROLE_ARN"
+          test -n "$ECR_REPOSITORY"
+
+      - name: Authenticate to AWS
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to private ECR
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push latest image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          image_uri="$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          docker tag kt-nd-pipeline:build-check "$image_uri"
+          docker push "$image_uri"
+          printf 'Image pushed: %s\n' "$image_uri" >> "$GITHUB_STEP_SUMMARY"
