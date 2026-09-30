@@ -1,6 +1,6 @@
 -- 14개 CSV 전체 배치. staging은 커밋 시 자동 삭제된다.
 \ir 005_load_master_staging.psql
-\copy stg_content_usage(content_usage_id,user_id,usage_date,content_category,content_detail,data_usage_mb) from :'content_usage_csv' with (format csv,header true,encoding 'UTF8')
+\copy stg_content_usage(content_usage_id,user_id,usage_date,content_category,content_detail,data_usage_mb) from 'content_usage.csv' with (format csv,header true,encoding 'UTF8')
 
 insert into audit.source_file(batch_id,source_name,source_path,sha256,row_count)
 values (:'batch_id'::uuid,'content_usage',:'content_usage_csv',:'content_usage_sha256',

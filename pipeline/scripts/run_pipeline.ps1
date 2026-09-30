@@ -18,6 +18,7 @@ if ([string]::IsNullOrWhiteSpace($RawDirectory)) { $RawDirectory = Join-Path $PS
 $psql = Get-Command psql -ErrorAction SilentlyContinue
 if (-not $psql) { throw 'psql was not found. Install PostgreSQL client tools and add psql to PATH.' }
 if (-not (Test-Path -LiteralPath $RawDirectory -PathType Container)) { throw "Raw directory not found: $RawDirectory" }
+$RawDirectory = [IO.Path]::GetFullPath($RawDirectory)
 if ([string]::IsNullOrWhiteSpace($PseudonymizationKey)) {
     if (-not $AllowSyntheticDefaultKey) {
         throw 'Set KT_ND_ANALYSIS_PSEUDONYMIZATION_KEY (or pass -PseudonymizationKey). For synthetic data only, explicitly use -AllowSyntheticDefaultKey.'
@@ -48,7 +49,7 @@ try {
 
 $sqlRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\sql'))
 $runFile = Join-Path $sqlRoot '010_run_pipeline.psql'
-$psqlArguments = @('-X', '-v', 'ON_ERROR_STOP=1', '-v', "source_set_checksum=$sourceSetChecksum", '-v', "reference_date=$ReferenceDate", '-v', "pseudonymization_key=$PseudonymizationKey")
+$psqlArguments = @('-X', '-v', 'ON_ERROR_STOP=1', '-v', "input_csv_directory=$RawDirectory", '-v', "source_set_checksum=$sourceSetChecksum", '-v', "reference_date=$ReferenceDate", '-v', "pseudonymization_key=$PseudonymizationKey")
 foreach ($name in $sourceFiles.Keys) {
     $psqlArguments += @('-v', "${name}_csv=$($fileState[$name].Path)", '-v', "${name}_sha256=$($fileState[$name].Sha256)")
 }

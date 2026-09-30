@@ -221,6 +221,7 @@ for ($offset = 0; $offset -lt $datesToProcess.Count; $offset += $MaxDatesPerBatc
         $sourceSetChecksum = $input.SourceSetChecksum
         $args = @(
             '-X', '-v', 'ON_ERROR_STOP=1',
+            '-v', "input_csv_directory=$temporaryRoot",
             '-v', "source_set_checksum=$sourceSetChecksum",
             '-v', "reference_date=$($processingDay.ToString($dateFormat))",
             '-v', "run_type=$runType",

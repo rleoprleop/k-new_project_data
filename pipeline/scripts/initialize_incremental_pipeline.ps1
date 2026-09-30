@@ -22,6 +22,7 @@ if (-not $psql) { throw 'psql was not found. Install PostgreSQL client tools and
 if (-not (Test-Path -LiteralPath $RawDirectory -PathType Container)) {
     throw "Raw directory not found: $RawDirectory"
 }
+$RawDirectory = [IO.Path]::GetFullPath($RawDirectory)
 if ([string]::IsNullOrWhiteSpace($PseudonymizationKey)) {
     if (-not $AllowSyntheticDefaultKey) {
         throw 'Set KT_ND_ANALYSIS_PSEUDONYMIZATION_KEY. For synthetic data only, use -AllowSyntheticDefaultKey.'
@@ -65,6 +66,7 @@ try {
 $runFile = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\sql\015_initialize_incremental_pipeline.psql'))
 $psqlArguments = @(
     '-X', '-v', 'ON_ERROR_STOP=1',
+    '-v', "input_csv_directory=$RawDirectory",
     '-v', "source_set_checksum=$sourceSetChecksum",
     '-v', "reference_date=$ReferenceDate",
     '-v', "pseudonymization_key=$PseudonymizationKey"

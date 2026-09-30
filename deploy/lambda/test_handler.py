@@ -1,6 +1,7 @@
 """Offline tests only: no AWS credentials, network calls, psql, or SQL execution."""
 
 import logging
+import re
 import subprocess
 import unittest
 from datetime import date
@@ -27,6 +28,76 @@ def tearDownModule():
 
 def incremental(first="2025-10-24", last="2025-10-24"):
     return handler._validate_event({"action": "incremental", "from_date": first, "to_date": last}, TODAY)
+
+
+class CsvPathTests(unittest.TestCase):
+    """Offline regression checks for the SQL/PowerShell CSV path contract."""
+
+    root = Path(__file__).resolve().parents[2]
+
+    def loader(self, name):
+        return (self.root / "db" / "load" / name).read_text(encoding="utf-8")
+
+    def copy_filenames(self, text):
+        lines = [line for line in text.splitlines() if line.startswith(r"\copy ")]
+        filenames = []
+        for line in lines:
+            match = re.search(r" from '([a-z_]+\.csv)' with ", line)
+            self.assertIsNotNone(match, "COPY must use a fixed client-side CSV filename")
+            self.assertNotIn("from :", line)
+            self.assertIn("format csv,header true,encoding 'UTF8'", line)
+            filenames.append(match.group(1))
+        return filenames
+
+    def test_master_copy_uses_the_13_expected_fixed_filenames(self):
+        text = self.loader("005_load_master_staging.psql")
+        self.assertEqual(tuple(self.copy_filenames(text)), handler.MASTER_FILES)
+        self.assertLess(text.index(r"\cd :input_csv_directory"), text.index("\n\\copy "))
+
+    def test_incremental_copy_reads_manifest_and_combined_csv(self):
+        text = self.loader("020_load_incremental_content_usage.psql")
+        self.assertEqual(self.copy_filenames(text), ["source_manifest.csv", "content_usage.csv"])
+        self.assertLess(text.index(r"\cd :input_csv_directory"), text.index("\n\\copy "))
+
+    def test_full_load_inherits_the_master_input_directory(self):
+        text = self.loader("010_load_full_staging.psql")
+        self.assertEqual(self.copy_filenames(text), ["content_usage.csv"])
+        self.assertLess(text.index(r"\ir 005_load_master_staging.psql"), text.index("\n\\copy "))
+
+    def test_runners_pass_the_matching_absolute_csv_directory(self):
+        scripts = self.root / "pipeline" / "scripts"
+        for name in ("initialize_incremental_pipeline.ps1", "run_pipeline.ps1"):
+            with self.subTest(script=name):
+                text = (scripts / name).read_text(encoding="utf-8")
+                self.assertIn('$RawDirectory = [IO.Path]::GetFullPath($RawDirectory)', text)
+                self.assertIn("'-v', \"input_csv_directory=$RawDirectory\"", text)
+                self.assertIn('"${name}_csv=$($fileState[$name].Path)"', text)
+        text = (scripts / "run_incremental_pipeline.ps1").read_text(encoding="utf-8")
+        self.assertIn("'-v', \"input_csv_directory=$temporaryRoot\"", text)
+        self.assertIn("Join-Path $TemporaryRoot 'content_usage.csv'", text)
+        self.assertIn("Join-Path $TemporaryRoot 'source_manifest.csv'", text)
+        self.assertIn('"content_usage_csv=$($input.CombinedPath)"', text)
+        self.assertIn('"source_manifest_csv=$($input.ManifestPath)"', text)
+
+    def test_audit_keeps_original_absolute_source_path_variables(self):
+        master = self.loader("005_load_master_staging.psql")
+        for filename in handler.MASTER_FILES:
+            stem = Path(filename).stem
+            with self.subTest(source=stem):
+                self.assertIn(":'" + stem + "_csv'", master)
+                self.assertIn(":'" + stem + "_sha256'", master)
+        self.assertIn(":'content_usage_csv'", self.loader("010_load_full_staging.psql"))
+        self.assertIn("'content_usage',source_path,event_date,object_version,sha256,row_count",
+                      self.loader("020_load_incremental_content_usage.psql"))
+
+    def test_sql_includes_remain_relative_to_the_sql_file_not_csv_directory(self):
+        files = list((self.root / "db" / "load").glob("*.psql"))
+        files += list((self.root / "pipeline" / "sql").glob("*.psql"))
+        for path in files:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.startswith(r"\ir "):
+                    with self.subTest(sql=path.name, include=line):
+                        self.assertTrue((path.parent / line[4:].strip()).resolve().is_file())
 
 
 class EventTests(unittest.TestCase):

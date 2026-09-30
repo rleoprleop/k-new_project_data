@@ -1,4 +1,6 @@
 -- 선택된 날짜 파티션을 세션 임시 staging에 적재한다.
+-- \copy는 변수를 치환하지 않으므로 지정한 입력 폴더의 고정 파일명을 읽는다.
+\cd :input_csv_directory
 delete from audit.source_file where batch_id=:'batch_id'::uuid;
 
 create temp table incremental_source_file (
@@ -17,8 +19,8 @@ create temp table stg_content_usage (
   unique(user_id,usage_date,content_category,content_detail)
 ) on commit drop;
 
-\copy incremental_source_file(source_path,event_date,object_version,sha256,row_count) from :'source_manifest_csv' with (format csv,header true,encoding 'UTF8')
-\copy incremental_content_usage(partition_event_date,content_usage_id,user_id,usage_date,content_category,content_detail,data_usage_mb) from :'content_usage_csv' with (format csv,header true,encoding 'UTF8')
+\copy incremental_source_file(source_path,event_date,object_version,sha256,row_count) from 'source_manifest.csv' with (format csv,header true,encoding 'UTF8')
+\copy incremental_content_usage(partition_event_date,content_usage_id,user_id,usage_date,content_category,content_detail,data_usage_mb) from 'content_usage.csv' with (format csv,header true,encoding 'UTF8')
 
 insert into stg_content_usage
 select content_usage_id,user_id,usage_date,content_category,content_detail,data_usage_mb
