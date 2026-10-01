@@ -3,8 +3,22 @@ name: Build and push Lambda image
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "db/**"
+      - "pipeline/**"
+      - "deploy/lambda/handler.py"
+      - ".github/workflows/push-ecr.yml"
   pull_request:
     branches: [ "main" ]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "db/**"
+      - "pipeline/**"
+      - "deploy/lambda/handler.py"
+      - ".github/workflows/push-ecr.yml"
   workflow_dispatch:
 
 permissions:
