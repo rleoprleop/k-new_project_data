@@ -8,6 +8,7 @@
 | --- | --- | --- |
 | `verification/verify_loaded_data.psql` | 증분 파이프라인 성공 여부 확인 | DB 실행 이력·워터마크·품질 결과와 선택적 사용량 총합 보고서 |
 | `customer-selection/*.sql` | 추천 사례 고객 선정 | 고객 현재 상태·최근 사용량·정책에서 최대 10명의 고객 조회 |
+| [`customer-selection/select_example_customers.psql`](customer-selection/select_example_customers.psql) | 다섯 고객 선정 사례를 순서대로 실행 | 동일한 읽기 전용 스냅샷에서 사례별 최대 10명의 고객 조회 |
 
 아래 명령은 연결된 psql에서 실행합니다. 고객 선정 SQL은 DB가 연결된 SQL 편집기에서도 실행할 수 있습니다. 실제 연결 문자열과 키는 파일에 기록하지 않습니다.
 
@@ -159,9 +160,36 @@ rollback;
 
 ### SQL 파일 실행 방법
 
+다섯 사례를 한 번에 조회하려면 기존 트랜잭션이 없는 접속된 psql 세션에서
+[select_example_customers.psql](customer-selection/select_example_customers.psql)을 실행합니다.
+사례 1 → 2 → 3 → 4-A → 4-B 순서로 결과를 표시하며, 모두 같은 읽기 전용 스냅샷을 사용합니다.
+이 실행에는 `ai_personalization`과 `dw_personalization` 조회 권한이 필요합니다.
+
+```psql
+\i C:/kt_nd/tools/customer-selection/select_example_customers.psql
+```
+
+`.psql` 파일 본문에 다섯 쿼리가 직접 들어 있으며, 외부 SQL 파일을 불러오지 않습니다.
+`verification/verify_loaded_data.psql`처럼 오류 시 중단하는 읽기 전용 보고서이고,
+정상 종료 시 `rollback;`으로 조회 트랜잭션을 종료합니다. 사례 안내문은 영문으로 표시합니다.
+실행 파일과 개별 SQL 파일은 ASCII 문자만 사용하여 UTF8·UHC 세션에서 모두 읽을 수 있습니다.
+한글 결과 문구는 PostgreSQL의 `U&'\XXXX...'` Unicode 이스케이프로 표현하며 내용은 유지합니다.
+실행 파일은 `client_encoding`을 변경하지 않습니다. Unicode 문자열 처리에 필요한
+`standard_conforming_strings`는 읽기 전용 트랜잭션 안에서만 `on`으로 설정합니다.
+
+콘솔에 한글 SQL을 직접 입력할 때는 콘솔 입력 인코딩과 psql의 `client_encoding`이 일치해야 합니다.
+예를 들어 CP949 콘솔에서 `총`의 바이트 `0xc3 0xd1`가 UTF8 오류로 표시되면,
+psql에서 `\encoding UHC`로 입력 인코딩을 맞춘 뒤 다시 실행합니다.
+UTF-8 콘솔에서는 `\encoding UTF8`을 사용합니다. 실행 파일을 읽기 위해 콘솔 인코딩을 변경할 필요는 없습니다.
+오류가 발생하면 남은 사례를 실행하지 않습니다. 오류 또는 조회 취소로 이 파일이 연
+트랜잭션이 남았다면 `rollback;`으로 종료한 뒤 원인을 해결하고 다시 실행합니다.
+정상 종료는 조회 완료를 뜻하며, 각 사례에 고객이 10명씩 존재한다는 뜻은 아닙니다.
+
 실행할 사례의 `.sql` 파일을 SQL 편집기에서 열어 해당 DB 연결로 실행합니다.
 파일은 `tools/customer-selection/`에 있으며 사례별로 독립 실행합니다.
-사용량·요금 기준과 고객 수를 바꿀 때는 SQL 파일을 수정합니다.
+사용량·요금 기준과 고객 수를 바꿀 때는 실행할 SQL 파일을 수정합니다.
+개별 `.sql` 파일과 일괄 실행용 `.psql`의 쿼리는 각각 저장되어 있으므로,
+두 방식에 같은 기준을 적용하려면 `.psql`의 해당 사례 본문도 함께 수정합니다.
 
 접속된 psql 프롬프트에서도 다음처럼 선택한 파일을 실행할 수 있습니다.
 아래는 PowerShell 명령이 아니라 psql 명령이며, 저장소를 옮겼다면 경로를 수정합니다.

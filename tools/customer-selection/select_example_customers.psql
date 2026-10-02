@@ -1,0 +1,392 @@
+-- Read-only customer selection report; all five queries are embedded below.
+-- Selection criteria, required privileges and interpretation: tools/README.md
+-- Run in a connected psql session with no existing transaction:
+--   \i C:/kt_nd/tools/customer-selection/select_example_customers.psql
+-- ASCII input is compatible with UTF8 and UHC client encodings.
+-- This report preserves client_encoding; Korean labels use Unicode escapes.
+-- If an error leaves this report transaction open, execute rollback;
+
+\set ON_ERROR_STOP on
+
+begin transaction isolation level repeatable read read only;
+set local standard_conforming_strings = on;
+
+\echo '1. YouTube usage and benefit mismatch'
+-- Begin embedded query: case_01_youtube_benefit_mismatch.sql
+-- Case 1. YouTube usage and benefit mismatch
+-- Selection criteria and result interpretation: tools/README.md
+-- Standalone SELECT returning at most 10 customers.
+-- ASCII input; Unicode escapes preserve Korean result labels.
+-- PostgreSQL standard_conforming_strings must be on (the default).
+-- Actual database results have not been verified.
+
+with latest as (
+    select max(calendar_date) as end_date
+    from ai_personalization.v_customer_month_daily_usage
+),
+usage_30d as (
+    select
+        u.user_id,
+        sum(u.data_usage_mb) / 1024.0 as total_usage_gb,
+        coalesce(
+            sum(u.data_usage_mb) filter (
+                where u.content_detail in (
+                    'youtube_video',
+                    'youtube_shorts',
+                    'youtube_music'
+                )
+            ),
+            0
+        ) / 1024.0 as youtube_usage_gb
+    from ai_personalization.v_customer_day_content_usage u
+    cross join latest l
+    where u.calendar_date between l.end_date - 29 and l.end_date
+    group by u.user_id
+    having count(distinct u.calendar_date) = 30
+),
+selected_services as (
+    select
+        user_id,
+        string_agg(
+            distinct service_name, ', ' order by service_name
+        ) as current_services,
+        bool_or(service_id = 'S002') as has_youtube_service
+    from ai_personalization.v_customer_service_current
+    group by user_id
+),
+youtube_benefit_plans as (
+    select distinct plan_id
+    from ai_personalization.v_plan_benefits
+    where service_id = 'S002'
+)
+select
+    p.user_id,
+    p.name,
+    p.plan_name,
+    p.monthly_fee,
+    p.is_unlimited,
+    round(u.total_usage_gb, 2) as usage_30d_gb,
+    round(u.youtube_usage_gb, 2) as youtube_30d_gb,
+    round(
+        u.youtube_usage_gb / nullif(u.total_usage_gb, 0) * 100,
+        1
+    ) as youtube_share_pct,
+    coalesce(s.current_services, U&'\C120\D0DD \C11C\BE44\C2A4 \C5C6\C74C') as current_services,
+    case
+        when b.plan_id is not null
+            then U&'\D604\C7AC \C694\AE08\C81C\C5D0\C11C YouTube \D61C\D0DD \C120\D0DD \AC00\B2A5\D558\C9C0\B9CC \BBF8\C120\D0DD'
+        when p.is_unlimited
+             and p.plan_family not in ('CHOICE', 'CHOICE_DOUBLE')
+            then U&'\CD08\C774\C2A4 \C678 \BB34\C81C\D55C \C694\AE08\C81C\C774\BA70 YouTube \D61C\D0DD \C5C6\C74C'
+        else U&'\D604\C7AC \C694\AE08\C81C\C5D0 YouTube \D61C\D0DD \C5C6\C74C'
+    end as case_detail,
+    l.end_date as usage_end_date
+from ai_personalization.v_customer_current_plan p
+join usage_30d u on u.user_id = p.user_id
+left join selected_services s on s.user_id = p.user_id
+left join youtube_benefit_plans b on b.plan_id = p.plan_id
+cross join latest l
+where u.youtube_usage_gb >= 20
+  and u.youtube_usage_gb / nullif(u.total_usage_gb, 0) >= 0.30
+  and not coalesce(s.has_youtube_service, false)
+-- Optional: uncomment the next five predicates for non-Choice unlimited plans priced KRW 70,000-89,999.
+--  and p.is_unlimited
+--  and p.plan_family not in ('CHOICE', 'CHOICE_DOUBLE')
+--  and p.monthly_fee >= 70000
+--  and p.monthly_fee < 90000
+--  and b.plan_id is null
+order by u.youtube_usage_gb desc, p.user_id
+limit 10;
+-- End embedded query: case_01_youtube_benefit_mismatch.sql
+
+\echo '2. High data usage with a low-fee plan'
+-- Begin embedded query: case_02_high_usage_low_fee.sql
+-- Case 2. High data usage with a low-fee plan
+-- Selection criteria and result interpretation: tools/README.md
+-- Standalone SELECT returning at most 10 customers.
+-- ASCII input; Unicode escapes preserve Korean result labels.
+-- PostgreSQL standard_conforming_strings must be on (the default).
+-- Actual database results have not been verified.
+
+with latest as (
+    select max(calendar_date) as end_date
+    from ai_personalization.v_customer_month_daily_usage
+),
+usage_30d as (
+    select
+        u.user_id,
+        sum(u.total_usage_mb) / 1024.0 as total_usage_gb
+    from ai_personalization.v_customer_month_daily_usage u
+    cross join latest l
+    where u.calendar_date between l.end_date - 29 and l.end_date
+    group by u.user_id
+    having count(distinct u.calendar_date) = 30
+)
+select
+    p.user_id,
+    p.name,
+    p.plan_name,
+    p.monthly_fee,
+    p.data_limit_gb as base_data_limit_gb,
+    round(u.total_usage_gb, 2) as usage_30d_gb,
+    l.end_date as usage_end_date
+from ai_personalization.v_customer_current_plan p
+join usage_30d u on u.user_id = p.user_id
+cross join latest l
+where u.total_usage_gb >= 80
+  and p.monthly_fee <= 61000
+  and not p.is_unlimited
+  and p.data_limit_gb <= 30
+order by u.total_usage_gb desc, p.monthly_fee, p.user_id
+limit 10;
+-- End embedded query: case_02_high_usage_low_fee.sql
+
+\echo '3. Low data usage with a high-fee plan'
+-- Begin embedded query: case_03_low_usage_high_fee.sql
+-- Case 3. Low data usage with a high-fee plan
+-- Selection criteria and result interpretation: tools/README.md
+-- Standalone SELECT returning at most 10 customers.
+-- ASCII input; Unicode escapes preserve Korean result labels.
+-- PostgreSQL standard_conforming_strings must be on (the default).
+-- Actual database results have not been verified.
+
+with latest as (
+    select max(calendar_date) as end_date
+    from ai_personalization.v_customer_month_daily_usage
+),
+usage_30d as (
+    select
+        u.user_id,
+        sum(u.total_usage_mb) / 1024.0 as total_usage_gb
+    from ai_personalization.v_customer_month_daily_usage u
+    cross join latest l
+    where u.calendar_date between l.end_date - 29 and l.end_date
+    group by u.user_id
+    having count(distinct u.calendar_date) = 30
+)
+select
+    p.user_id,
+    p.name,
+    p.plan_name,
+    p.monthly_fee,
+    p.is_unlimited,
+    round(u.total_usage_gb, 2) as usage_30d_gb,
+    l.end_date as usage_end_date
+from ai_personalization.v_customer_current_plan p
+join usage_30d u on u.user_id = p.user_id
+cross join latest l
+where u.total_usage_gb < 15
+  and p.monthly_fee >= 80000
+order by p.monthly_fee desc, u.total_usage_gb, p.user_id
+limit 10;
+-- End embedded query: case_03_low_usage_high_fee.sql
+
+\echo '4-A. Choice customers without premium family enrollment'
+-- Begin embedded query: case_04a_premium_family_not_enrolled.sql
+-- Case 4-A. Choice customers without premium family enrollment
+-- Selection criteria and result interpretation: tools/README.md
+-- Standalone SELECT returning at most 10 customers.
+-- ASCII input; Unicode escapes preserve Korean result labels.
+-- PostgreSQL standard_conforming_strings must be on (the default).
+-- Actual database results have not been verified.
+
+with premium_rule as (
+    select
+        minimum_plan_fee,
+        minimum_high_line_count,
+        maximum_mobile_line_count,
+        discount_rate
+    from dw_personalization.premium_family_discount_rules
+    where discount_id = 'D003'
+      and (
+          effective_start_date is null
+          or effective_start_date <= current_date
+      )
+      and (
+          effective_end_date is null
+          or effective_end_date >= current_date
+      )
+),
+members as (
+    select
+        u.user_id,
+        u.name,
+        u.age,
+        u.subscription_start_date,
+        u.family_id,
+        p.plan_name,
+        p.plan_family,
+        p.monthly_fee
+    from dw_personalization.users u
+    join dw_personalization.plans p
+      on p.plan_id = u.current_plan_id
+    where u.family_id is not null
+      and p.family_bundle_eligible
+),
+family_stats as (
+    select
+        m.family_id,
+        count(*) as member_count,
+        count(*) filter (
+            where m.monthly_fee >= r.minimum_plan_fee
+        ) as high_fee_line_count
+    from members m
+    cross join premium_rule r
+    group by m.family_id
+),
+ranked_high_members as (
+    select
+        m.*,
+        row_number() over (
+            partition by m.family_id
+            order by
+                m.monthly_fee,
+                m.age desc,
+                m.subscription_start_date,
+                m.user_id
+        ) as base_candidate_rank
+    from members m
+    cross join premium_rule r
+    where m.monthly_fee >= r.minimum_plan_fee
+)
+select
+    m.user_id,
+    m.name,
+    m.plan_name,
+    m.monthly_fee,
+    m.family_id,
+    s.member_count,
+    s.high_fee_line_count,
+    round(m.monthly_fee * r.discount_rate, 0)
+        as potential_premium_discount_per_month,
+    U&'\D504\B9AC\BBF8\C5C4 \AC00\C871\ACB0\D569 \BBF8\AC00\C785 \CD08\C774\C2A4 \ACE0\AC1D' as case_detail
+from ranked_high_members m
+join family_stats s on s.family_id = m.family_id
+join dw_personalization.families f on f.family_id = m.family_id
+cross join premium_rule r
+where not f.has_bundle
+  and f.has_kt_internet
+  and f.internet_status = 'ACTIVE'
+  and f.internet_product_group = 'BASIC_ESSENCE_PREMIUM'
+  and s.high_fee_line_count >= r.minimum_high_line_count
+  and s.member_count <= r.maximum_mobile_line_count
+  and m.plan_family in ('CHOICE', 'CHOICE_DOUBLE')
+  and m.base_candidate_rank > 1
+  and not exists (
+      select 1
+      from ai_personalization.v_customer_discount_current d
+      where d.user_id = m.user_id
+        and d.discount_id = 'D003'
+  )
+order by
+    potential_premium_discount_per_month desc,
+    m.family_id,
+    m.user_id
+limit 10;
+-- End embedded query: case_04a_premium_family_not_enrolled.sql
+
+\echo '4-B. Customers without total bundle enrollment'
+-- Begin embedded query: case_04b_total_bundle_not_enrolled.sql
+-- Case 4-B. Customers without total bundle enrollment
+-- Selection criteria and result interpretation: tools/README.md
+-- Standalone SELECT returning at most 10 customers.
+-- ASCII input; Unicode escapes preserve Korean result labels.
+-- PostgreSQL standard_conforming_strings must be on (the default).
+-- Actual database results have not been verified.
+
+with members as (
+    select
+        u.user_id,
+        u.name,
+        u.family_id,
+        p.plan_name,
+        p.monthly_fee
+    from dw_personalization.users u
+    join dw_personalization.plans p
+      on p.plan_id = u.current_plan_id
+    where u.family_id is not null
+      and p.family_bundle_eligible
+),
+family_stats as (
+    select
+        family_id,
+        count(*) as member_count,
+        sum(monthly_fee) as family_total_monthly_fee
+    from members
+    group by family_id
+),
+eligible_families as (
+    select
+        f.family_id,
+        s.member_count,
+        s.family_total_monthly_fee,
+        f.internet_product_group,
+        f.internet_contract_months,
+        r.discount_amount as potential_family_mobile_discount
+    from dw_personalization.families f
+    join family_stats s on s.family_id = f.family_id
+    join dw_personalization.internet_bundle_discount_rules r
+      on r.discount_id = 'D001'
+     and r.bundle_discount_method = 'TOTAL'
+     and r.rule_type = 'MOBILE_TOTAL_POOL'
+     and r.discount_target = 'MOBILE_POOL'
+     and (
+         r.internet_product_group = f.internet_product_group
+         or r.internet_product_group = 'ANY'
+     )
+     and r.contract_months = f.internet_contract_months
+     and (
+         r.mobile_total_fee_min is null
+         or s.family_total_monthly_fee >= r.mobile_total_fee_min
+     )
+     and (
+         r.mobile_total_fee_max is null
+         or s.family_total_monthly_fee <= r.mobile_total_fee_max
+     )
+    where not f.has_bundle
+      and f.has_kt_internet
+      and f.internet_status = 'ACTIVE'
+      and s.member_count >= 2
+      and r.discount_amount > 0
+      and (
+          r.effective_start_date is null
+          or r.effective_start_date <= current_date
+      )
+      and (
+          r.effective_end_date is null
+          or r.effective_end_date >= current_date
+      )
+      and not exists (
+          select 1
+          from ai_personalization.v_customer_discount_current d
+          join members fm on fm.user_id = d.user_id
+          where fm.family_id = f.family_id
+            and d.policy_domain in (
+                'INTERNET_BUNDLE',
+                'PREMIUM_FAMILY'
+            )
+      )
+)
+select
+    m.user_id,
+    m.name,
+    m.plan_name,
+    m.monthly_fee,
+    e.family_id,
+    e.member_count,
+    e.family_total_monthly_fee,
+    e.internet_product_group,
+    e.internet_contract_months,
+    e.potential_family_mobile_discount,
+    U&'\CD1D\C561\ACB0\D569 \BBF8\AC00\C785 \ACE0\AC1D' as case_detail
+from members m
+join eligible_families e on e.family_id = m.family_id
+order by
+    e.potential_family_mobile_discount desc,
+    e.family_id,
+    m.user_id
+limit 10;
+-- End embedded query: case_04b_total_bundle_not_enrolled.sql
+
+rollback;
+\echo 'Read-only customer selection finished. Review the results and row counts above.'

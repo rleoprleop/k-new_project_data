@@ -1,7 +1,9 @@
--- 사례 4-A: 프리미엄 가족결합 미가입 초이스 고객
--- 선정 기준과 결과 해석: tools/README.md
--- 독립적으로 실행하는 조회 쿼리이며 최대 10명의 고객을 반환합니다.
--- 실제 DB 실행과 추출 건수는 아직 검증하지 않았습니다.
+-- Case 4-A. Choice customers without premium family enrollment
+-- Selection criteria and result interpretation: tools/README.md
+-- Standalone SELECT returning at most 10 customers.
+-- ASCII input; Unicode escapes preserve Korean result labels.
+-- PostgreSQL standard_conforming_strings must be on (the default).
+-- Actual database results have not been verified.
 
 with premium_rule as (
     select
@@ -72,7 +74,7 @@ select
     s.high_fee_line_count,
     round(m.monthly_fee * r.discount_rate, 0)
         as potential_premium_discount_per_month,
-    '프리미엄 가족결합 미가입 초이스 고객' as case_detail
+    U&'\D504\B9AC\BBF8\C5C4 \AC00\C871\ACB0\D569 \BBF8\AC00\C785 \CD08\C774\C2A4 \ACE0\AC1D' as case_detail
 from ranked_high_members m
 join family_stats s on s.family_id = m.family_id
 join dw_personalization.families f on f.family_id = m.family_id

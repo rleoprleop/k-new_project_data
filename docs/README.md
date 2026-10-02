@@ -15,16 +15,17 @@
 | AI가 쿼리를 선택하고 n8n이 실행하는 규칙 | [n8n 고정 쿼리 계약](integration/n8n-fixed-query-contract.md) |
 | 운영 영역에서 실행할 고정 SQL | [운영 쿼리 카탈로그](integration/query-catalogs/operations-query-catalog.csv) |
 | 개인화 영역에서 실행할 고정 SQL | [개인화 쿼리 카탈로그](integration/query-catalogs/personalization-query-catalog.csv) |
+| AI에 전달할 운영·개인화 뷰의 컬럼·타입·집계 기준 | [AI 조회 뷰 스키마](integration/view-schemas/README.md) |
 | 적재 확인과 사례별 고객 조회 | [도구 사용 안내](../tools/README.md) |
 
 ## 폴더 구성
 
 - `data/`: 생성 규칙과 원본·분석용 CSV 데이터 사전
-- `integration/`: n8n 실행 계약과 쿼리 카탈로그
+- `integration/`: n8n 실행 계약, 쿼리 카탈로그와 AI 조회 뷰 스키마
 - `guides/`: 여러 모듈을 이어 실행하는 단계별 절차
 - `architecture.md`: 프로젝트 전체 설계와 설계 근거
 
-쿼리 카탈로그 CSV는 생성 데이터가 아니라 관리하는 SQL 명세이므로 Git에 포함합니다. 과거 문서·DOCX와 전용 생성 도구는 `.local/archive/`에 보관하며 현재 기준 문서에서 분리합니다.
+쿼리 카탈로그와 뷰 스키마 CSV는 생성 데이터가 아니라 관리하는 SQL 명세이므로 Git에 포함합니다. 과거 문서·DOCX와 전용 생성 도구는 `.local/archive/`에 보관하며 현재 기준 문서에서 분리합니다.
 
 ## 문서의 역할 나누기
 

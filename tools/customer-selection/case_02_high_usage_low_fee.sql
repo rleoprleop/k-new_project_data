@@ -1,7 +1,9 @@
--- 사례 2: 데이터 고사용량과 저가 요금제
--- 선정 기준과 결과 해석: tools/README.md
--- 독립적으로 실행하는 조회 쿼리이며 최대 10명의 고객을 반환합니다.
--- 실제 DB 실행과 추출 건수는 아직 검증하지 않았습니다.
+-- Case 2. High data usage with a low-fee plan
+-- Selection criteria and result interpretation: tools/README.md
+-- Standalone SELECT returning at most 10 customers.
+-- ASCII input; Unicode escapes preserve Korean result labels.
+-- PostgreSQL standard_conforming_strings must be on (the default).
+-- Actual database results have not been verified.
 
 with latest as (
     select max(calendar_date) as end_date

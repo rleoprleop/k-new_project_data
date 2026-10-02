@@ -27,5 +27,9 @@ AI는 SQL을 작성하거나 수정하지 않습니다. AI가 반환할 수 있�
 [`personalization-query-catalog.csv`](query-catalogs/personalization-query-catalog.csv)와
 `n8n_personalization` 계정을 사용합니다.
 
+AI에 컬럼과 집계 기준을 전달할 때는 [뷰 스키마 안내](view-schemas/README.md)에 따라
+해당 영역의 스키마 CSV를 쿼리 카탈로그와 함께 제공합니다. 스키마 CSV는 뷰 해석용이며,
+실행할 수 있는 쿼리와 parameter는 기존 쿼리 카탈로그를 기준으로 합니다.
+
 개인화의 사용자 단위 쿼리는 `user_id`와 `name`을 함께 반환합니다. 이름을 가져오기 위한
 별도 쿼리를 연쇄 실행하지 않습니다.

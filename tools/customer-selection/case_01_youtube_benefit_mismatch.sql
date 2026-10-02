@@ -1,7 +1,9 @@
--- 사례 1: YouTube 사용과 선택 혜택 불일치
--- 선정 기준과 결과 해석: tools/README.md
--- 독립적으로 실행하는 조회 쿼리이며 최대 10명의 고객을 반환합니다.
--- 실제 DB 실행과 추출 건수는 아직 검증하지 않았습니다.
+-- Case 1. YouTube usage and benefit mismatch
+-- Selection criteria and result interpretation: tools/README.md
+-- Standalone SELECT returning at most 10 customers.
+-- ASCII input; Unicode escapes preserve Korean result labels.
+-- PostgreSQL standard_conforming_strings must be on (the default).
+-- Actual database results have not been verified.
 
 with latest as (
     select max(calendar_date) as end_date
@@ -54,14 +56,14 @@ select
         u.youtube_usage_gb / nullif(u.total_usage_gb, 0) * 100,
         1
     ) as youtube_share_pct,
-    coalesce(s.current_services, '선택 서비스 없음') as current_services,
+    coalesce(s.current_services, U&'\C120\D0DD \C11C\BE44\C2A4 \C5C6\C74C') as current_services,
     case
         when b.plan_id is not null
-            then '현재 요금제에서 YouTube 혜택 선택 가능하지만 미선택'
+            then U&'\D604\C7AC \C694\AE08\C81C\C5D0\C11C YouTube \D61C\D0DD \C120\D0DD \AC00\B2A5\D558\C9C0\B9CC \BBF8\C120\D0DD'
         when p.is_unlimited
              and p.plan_family not in ('CHOICE', 'CHOICE_DOUBLE')
-            then '초이스 외 무제한 요금제이며 YouTube 혜택 없음'
-        else '현재 요금제에 YouTube 혜택 없음'
+            then U&'\CD08\C774\C2A4 \C678 \BB34\C81C\D55C \C694\AE08\C81C\C774\BA70 YouTube \D61C\D0DD \C5C6\C74C'
+        else U&'\D604\C7AC \C694\AE08\C81C\C5D0 YouTube \D61C\D0DD \C5C6\C74C'
     end as case_detail,
     l.end_date as usage_end_date
 from ai_personalization.v_customer_current_plan p
@@ -72,7 +74,7 @@ cross join latest l
 where u.youtube_usage_gb >= 20
   and u.youtube_usage_gb / nullif(u.total_usage_gb, 0) >= 0.30
   and not coalesce(s.has_youtube_service, false)
--- 초이스 미만의 7만~8만 원대 무제한 고객만 선정하려면 아래 다섯 조건의 주석을 해제합니다.
+-- Optional: uncomment the next five predicates for non-Choice unlimited plans priced KRW 70,000-89,999.
 --  and p.is_unlimited
 --  and p.plan_family not in ('CHOICE', 'CHOICE_DOUBLE')
 --  and p.monthly_fee >= 70000

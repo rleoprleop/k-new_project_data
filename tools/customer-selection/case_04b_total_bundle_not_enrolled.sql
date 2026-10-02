@@ -1,7 +1,9 @@
--- 사례 4-B: 총액결합 미가입 고객
--- 선정 기준과 결과 해석: tools/README.md
--- 독립적으로 실행하는 조회 쿼리이며 최대 10명의 고객을 반환합니다.
--- 실제 DB 실행과 추출 건수는 아직 검증하지 않았습니다.
+-- Case 4-B. Customers without total bundle enrollment
+-- Selection criteria and result interpretation: tools/README.md
+-- Standalone SELECT returning at most 10 customers.
+-- ASCII input; Unicode escapes preserve Korean result labels.
+-- PostgreSQL standard_conforming_strings must be on (the default).
+-- Actual database results have not been verified.
 
 with members as (
     select
@@ -87,7 +89,7 @@ select
     e.internet_product_group,
     e.internet_contract_months,
     e.potential_family_mobile_discount,
-    '총액결합 미가입 고객' as case_detail
+    U&'\CD1D\C561\ACB0\D569 \BBF8\AC00\C785 \ACE0\AC1D' as case_detail
 from members m
 join eligible_families e on e.family_id = m.family_id
 order by
