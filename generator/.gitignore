@@ -1,7 +1,0 @@
-# Generated data can be reproduced locally and is too large for routine commits.
-data/
-
-# Python artifacts
-__pycache__/
-*.py[cod]
-.venv/

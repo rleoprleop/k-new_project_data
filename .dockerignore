@@ -1,17 +1,17 @@
-# 기본적으로 모든 파일 제외
+# 저장소 루트를 빌드 컨텍스트로 사용하되 실행 파일만 포함한다.
 **
 
-# 실행 코드만 허용
-!Dockerfile
 !db/
 !db/**
 !pipeline/
 !pipeline/**
 !deploy/
+!deploy/docker/
+!deploy/docker/Dockerfile
 !deploy/lambda/
 !deploy/lambda/handler.py
 
-# 허용된 폴더 안에서도 제외
+# 허용된 폴더 안에서도 로컬 설정과 캐시는 제외한다.
 **/.env
 **/.env.*
 **/*.pem

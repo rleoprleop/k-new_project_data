@@ -12,9 +12,7 @@
 
 # Generated data and local-only document artifacts
 generator/data/
-generator/archive/
-docs/archive/
-docs/tools/
+.local/
 
 # Editor and operating-system files
 .vscode/

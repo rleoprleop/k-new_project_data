@@ -1,6 +1,6 @@
 # KT 합성 원본 데이터 스키마
 
-이 문서는 `data/generated/`에 생성되는 원본 성격의 합성 CSV 관계, 컬럼, enum, Null 의미와 사용 방법을 설명한다. 가명화된 `data/generated_analysis/`는 컬럼과 날짜 정밀도가 다르므로 [분석용 데이터 스키마](analysis-data-schema.md)를 참고한다. 데이터 생성 기준·합성 가중치·실행 및 검증 방법은 [생성기 README](../README.md)를 참고한다.
+이 문서는 `generator/data/generated/`에 생성되는 원본 성격의 합성 CSV 관계, 컬럼, enum, Null 의미와 사용 방법을 설명한다. 가명화된 `generator/data/generated_analysis/`는 컬럼과 날짜 정밀도가 다르므로 [분석용 데이터 스키마](analysis-data-schema.md)를 참고한다. 데이터 생성 기준·합성 가중치는 [생성 상세 사양](generation-spec.md), 실행 및 검증 방법은 [생성기 README](../../generator/README.md)를 참고한다.
 
 ## 1. 이 데이터 모델을 읽는 순서
 
@@ -607,7 +607,7 @@ users ──> content_usage
 | `google_ai` | S009 Google AI | 의미 매핑 |
 | `other_*`, `general_*`, `other` | 없음 | 특정 초이스 서비스와 연결하지 않음 |
 
-선택 혜택 사용 여부를 비교할 때는 `content_usage.user_id = user_services.user_id`로 사용자를 연결한 뒤 위 의미 매핑을 적용한다. 생성 확률과 가중치는 [생성기 README](../README.md)를 참고한다.
+선택 혜택 사용 여부를 비교할 때는 `content_usage.user_id = user_services.user_id`로 사용자를 연결한 뒤 위 의미 매핑을 적용한다. 생성 확률과 가중치는 [생성 상세 사양](generation-spec.md)를 참고한다.
 
 ## 4. 자주 사용하는 조인 예시
 

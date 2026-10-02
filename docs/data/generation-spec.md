@@ -1,6 +1,6 @@
 # 합성 통신 데이터 생성 상세 사양
 
-> 생성기 설치와 실행 방법은 [생성기 README](../README.md)를 참고하세요. 원본 CSV의 컬럼·관계·조인 방법은 [원본 데이터 스키마](data-schema.md), 가명화 출력은 [분석용 데이터 스키마](analysis-data-schema.md)에 정리되어 있습니다.
+> 생성기 설치와 실행 방법은 [생성기 README](../../generator/README.md)를 참고하세요. 원본 CSV의 컬럼·관계·조인 방법은 [원본 데이터 스키마](raw-data-schema.md), 가명화 출력은 [분석용 데이터 스키마](analysis-data-schema.md)에 정리되어 있습니다.
 
 KT 모바일 요금제, 사용량, 선택 혜택, 인터넷-모바일 결합 추천 로직을 검증하기 위한 합성 데이터 생성기입니다. 실제 개인정보나 실제 고객 청구 데이터를 사용하지 않습니다.
 
@@ -18,10 +18,10 @@ KT 모바일 요금제, 사용량, 선택 혜택, 인터넷-모바일 결합 추
 
 생성기는 같은 실행에서 원본 성격의 합성 CSV와 가명화된 분석용 CSV를 각각 만듭니다.
 
-- `data/generated/`: 원본 성격의 합성 데이터. 내부 Raw 적재와 생성 검증용입니다.
-- `data/generated_analysis/`: 분석·추천 Feature 설계용 데이터입니다. 이름과 원본 키를 제외하고, 사용자·가족·결합 키를 HMAC 기반 분석 키로 바꿉니다.
+- `generator/data/generated/`: 원본 성격의 합성 데이터. 내부 Raw 적재와 생성 검증용입니다.
+- `generator/data/generated_analysis/`: 분석·추천 Feature 설계용 데이터입니다. 이름과 원본 키를 제외하고, 사용자·가족·결합 키를 HMAC 기반 분석 키로 바꿉니다.
 
-`data/generated/`는 로컬 개발 환경의 **Data Lake** 역할을 합니다. 파이프라인은 이 원본 CSV를 PostgreSQL `pg_temp.stg_*`에 임시 적재한 뒤 운영·개인화 DW·DM을 생성합니다. staging은 배치 트랜잭션 종료 시 삭제됩니다. `data/generated_analysis/`는 별도 분석용 선택 출력이며 파이프라인 입력으로 사용하지 않습니다. 두 출력 디렉터리의 CSV는 재현 가능한 생성물이므로 Git에는 올리지 않습니다.
+`generator/data/generated/`는 로컬 개발 환경의 **Data Lake** 역할을 합니다. 파이프라인은 이 원본 CSV를 PostgreSQL `pg_temp.stg_*`에 임시 적재한 뒤 운영·개인화 DW·DM을 생성합니다. staging은 배치 트랜잭션 종료 시 삭제됩니다. `generator/data/generated_analysis/`는 별도 분석용 선택 출력이며 파이프라인 입력으로 사용하지 않습니다. 두 출력 디렉터리의 CSV는 재현 가능한 생성물이므로 Git에는 올리지 않습니다.
 
 원본·분석용 출력의 논리 테이블은 다음 14개입니다. 원본의 기본 `single` 방식과 분석용 출력은 각각 CSV 14개를 만들며, 원본 `daily` 방식은 스냅샷 CSV 13개와 날짜별 `content_usage` 파티션을 만듭니다. `both` 방식은 단일 콘텐츠 파일과 날짜별 파티션을 함께 만듭니다.
 
@@ -422,4 +422,4 @@ user_discounts, user_services, content_usage
 - 총액·정액 중 정책상 비최적 방식을 선택한 가족 비율
 - output 테이블의 주요 PK/FK와 결합 구성 정합성
 
-현재 생성 데이터의 상세 컬럼과 enum은 [원본 데이터 스키마](data-schema.md), 분석용 출력의 변환 컬럼과 사용법은 [분석용 데이터 스키마](analysis-data-schema.md)를 참고하세요.
+현재 생성 데이터의 상세 컬럼과 enum은 [원본 데이터 스키마](raw-data-schema.md), 분석용 출력의 변환 컬럼과 사용법은 [분석용 데이터 스키마](analysis-data-schema.md)를 참고하세요.

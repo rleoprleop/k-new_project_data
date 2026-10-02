@@ -1,38 +1,14 @@
-# 수동 Lambda 컨테이너 배포
+# AWS 배포와 수동 실행
 
-이 Handler는 기존 SQL/PowerShell을 수정하지 않고 S3 입력과 Secrets Manager를 연결합니다.
-운영·개인화 DW/DM은 한 Lambda에서 함께 처리합니다. 파일 작성이나 GitHub 이미지 빌드만으로
-RDS에 접속하거나 데이터를 적재하지 않습니다. DB 작업은 Console에서 명시적으로 이벤트를
-실행할 때만 수행됩니다.
+S3 원본 파일과 Secrets Manager의 비밀 설정을 연결하고 Lambda 컨테이너로 파이프라인을 실행하는 절차입니다. [배포 모듈](../../deploy/README.md)은 파일 구성·설정·로컬 검증을 설명하고, 이 가이드는 AWS에서 준비하고 실행하는 순서를 설명합니다.
 
-## 추가 파일과 검증 범위
+필요한 자원은 S3 원본 저장소, PostgreSQL RDS, ECR 저장소, Lambda 실행 역할, GitHub Actions의 AWS 인증 역할과 두 Secret입니다. 현재 배포는 운영·개인화 DW/DM을 한 Lambda에서 함께 처리합니다.
 
-- 루트 `Dockerfile`: Lambda Python 3.12, PowerShell 7.6.6, PostgreSQL 18 클라이언트,
-  공개 RDS CA 인증서, 기존 `db/`·`pipeline/`, `handler.py`를 포함합니다.
-  PostgreSQL 18을 제공하는 AL2023 패키지 저장소 버전 `2023.12.20260831`을 지정합니다.
-- 루트 `.dockerignore`: 생성 CSV, 생성기, Git 이력, 로컬 환경·인증 파일은 제외합니다.
-- `deploy/lambda/handler.py`: 다운로드, 비밀 조회, 기존 파이프라인 호출, audit 검증을 담당합니다.
-- `deploy/lambda/test_handler.py`: 네트워크·AWS·psql 실행 없는 표준 unittest입니다.
-- `.github/workflows/push-ecr.yml`: 테스트 → 이미지 빌드 → 읽기 전용·비루트·네트워크 차단
-  컨테이너의 health 검사 → main에서만 ECR `latest` 업로드 순서입니다.
+## 1. GitHub Actions에서 이미지 빌드·업로드
 
-로컬 확인 명령은 저장소 루트 `C:\kt_nd`에서 실행합니다.
+배포 모듈의 오프라인 테스트를 먼저 확인한 뒤 사용자가 변경을 커밋·푸시합니다. 워크플로는 `deploy/docker/Dockerfile`을 사용하고 저장소 루트를 빌드 컨텍스트로 지정합니다.
 
-```powershell
-python -B -m unittest discover -s deploy/lambda -p "test_handler.py" -v
-```
-
-이 테스트는 파이프라인 품질 SQL의 실제 실행을 대신하지 않습니다. 생성기, SQL, 데이터 규칙은
-변경하지 않았습니다. 실제 배포 후 audit 검증까지 성공해야 DB 적재 검증이 완료됩니다.
-
-## 1. 사용자가 커밋·푸시하고 Actions에서 이미지 확인
-
-GitHub에서 앞서 작성한 인증 테스트 워크플로와 로컬 작업을 먼저 동기화하세요. 같은
-`.github/workflows/push-ecr.yml` 파일은 이번 빌드 워크플로로 교체합니다. 다른 이름으로
-저장한 인증 테스트 파일이 있다면 이 워크플로가 그 파일을 자동으로 삭제하지는 않습니다.
-원격 main 변경을 덮어쓰거나 강제 푸시하지 마세요. 커밋·푸시는 사용자가 직접 합니다.
-
-GitHub Repository variables:
+GitHub Repository variables에 다음 값을 설정합니다:
 
 | 이름 | 값 |
 | --- | --- |
@@ -40,7 +16,7 @@ GitHub Repository variables:
 | `AWS_ROLE_ARN` | 이미 인증을 확인한 GitHub Actions 역할 ARN |
 | `ECR_REPOSITORY` | ECR 저장소 이름만. ARN·URI가 아님 |
 
-기존 push/main, pull_request/main, workflow_dispatch 트리거를 유지합니다. PR은 오프라인
+워크플로는 push/main, pull_request/main, workflow_dispatch로 실행합니다. PR은 오프라인
 테스트와 이미지 빌드·health까지만 수행하고 AWS 인증·업로드를 건너뜁니다. main push 또는
 main에서 수동 실행한 경우에만 인증 후 `latest`를 업로드합니다. Lambda 자동 배포는 하지 않습니다.
 
@@ -83,27 +59,12 @@ Decrypt 권한도 확인합니다. 별도 ECR 이미지 회수 정책은 Lambda 
 
 ## 4. Lambda 환경 변수
 
-구성 → 환경 변수 → 편집에서 등록합니다. 실제 비밀번호·HMAC 키를 넣지 않습니다.
-
-| 이름 | 값 |
-| --- | --- |
-| `S3_BUCKET` | 실제 버킷 이름만. `s3://` 제외 |
-| `MASTER_PREFIX` | `kt-nd/master` |
-| `CONTENT_USAGE_PREFIX` | `kt-nd/raw/content_usage` |
-| `RDS_SECRET_ID` | `kt-nd/rds/admin` |
-| `PSEUDONYMIZATION_SECRET_ID` | `kt-nd/pipeline/pseudonymization` |
-| `DATABASE_NAME` | 실제 연결할 DB 이름 |
-| `CONTENT_USAGE_START_DATE` | `2025-10-24` (현재 원본의 최초 날짜) |
-| `RDS_CA_PATH` | `/opt/certs/global-bundle.pem` (Dockerfile 기본값) |
-
-RDS Secret JSON에는 `host`, `port`, `username`, `password`가 필요합니다.
-HMAC Secret JSON에는 `pseudonymization_key`가 필요합니다. 같은 데이터를 계속 처리할 때
-키를 바꾸지 마세요. DB 이름은 Secret의 optional dbname 대신 `DATABASE_NAME`을 사용합니다.
+[배포 모듈의 설정 표](../../deploy/README.md#lambda-설정)를 기준으로 Lambda 구성 → 환경 변수에 값을 등록합니다. 연결 비밀번호와 HMAC 키는 Secrets Manager에서 관리합니다.
 
 ## 5. 테스트 이벤트: 아래 순서대로 수동 실행
 
 Lambda → 테스트 → 새 이벤트 생성. 이벤트 이름을 정하고 JSON을 입력한 뒤 테스트합니다.
-처음에는 **S3 트리거를 추가하지 않습니다**. 이벤트에는 비밀번호·키를 넣지 않습니다.
+현재 실행 경로는 수동 이벤트입니다. **S3 트리거를 추가하지 않습니다**. 이벤트에는 비밀번호·키를 넣지 않습니다.
 
 ### health: 설치와 실행 환경만 확인
 
@@ -169,31 +130,11 @@ kt-nd/raw/content_usage/event_date=2025-10-24/run_id=fix-001/part-000.csv
 
 이미 성공한 날짜만 허용합니다. 지정한 run_id만 다운로드하여 해당 날짜를 교체하고 기존 SQL이
 영향 월을 재집계합니다. 이는 데이터 정정이지 스키마 마이그레이션이 아닙니다.
-마이그레이션은 AGENTS.md의 새 번호 SQL·재실행 가능 규칙에 따라 별도로 검토해야 합니다.
+마이그레이션은 [DB 안내](../../db/README.md#타입과-마이그레이션에서-주의할-점)의 새 번호 SQL·재실행 가능 규칙에 따라 별도로 적용합니다.
 
-## 6. 사용자가 psql에서 실행할 확인 SQL
+## 6. 실행 결과 확인
 
-이미 연결한 로컬 psql 세션에서 실행합니다. 이 문서나 Handler 작성 단계에서 에이전트는
-RDS에 연결하거나 SQL을 실행하지 않습니다.
-
-```sql
-select batch_id,run_type,event_date_from,event_date_to,status,started_at,ended_at
-from audit.pipeline_run
-where pipeline_name='content_usage_daily'
-order by started_at desc limit 10;
-
-select pipeline_name,last_successful_event_date from audit.ingestion_watermark;
-
-select q.batch_id,q.rule_name,q.failed_row_count
-from audit.data_quality_result q
-join audit.pipeline_run r on r.batch_id=q.batch_id
-where r.pipeline_name='content_usage_daily' and q.failed_row_count>0;
-```
-
-요청한 배치가 `SUCCEEDED`이고 품질 실패 행이 없는지 확인합니다.
-주의: 현재 품질 검사 실패는 트랜잭션 rollback으로 실패 검사 행도 사라질 수 있습니다.
-따라서 "실패 행 0개"만으로 성공이라 판단하지 말고 요청 배치의 SUCCEEDED 상태와 watermark를
-함께 확인하세요. Handler도 성공 audit 배치·품질 결과·증분 watermark를 확인합니다.
+Lambda 호출이 종료되면 [도구 안내](../../tools/README.md#적재-후-검증)의 검증 SQL을 실행합니다. 요청 배치의 SUCCEEDED 상태, 품질 검사 기록과 실패 행 0개, 증분 워터마크 도달 여부를 함께 확인합니다. 품질 실패 시 검사 기록도 롤백될 수 있어 실패 행이 없다는 사실만으로 성공으로 판단하지 않습니다.
 
 Lambda 모니터링 → CloudWatch Logs 보기에서 단계·action·batch_id를 확인합니다.
 보안을 위해 subprocess 원문 출력은 로깅하지 않습니다. 실패 시 먼저 `stage`와 오류 유형을

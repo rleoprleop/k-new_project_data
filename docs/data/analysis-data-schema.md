@@ -1,6 +1,6 @@
 # KT 합성 분석용 데이터 스키마
 
-이 문서는 `data/generated_analysis/`에 생성되는 가명화 분석용 CSV의 실제 컬럼, 관계, grain과 사용 방법을 설명한다. 원본 식별자와 정확한 날짜가 필요한 생성 검증에는 `data/generated/`와 [원본 데이터 스키마](data-schema.md)를 사용한다. 데이터 생성 기준과 합성 가중치는 [생성기 README](../README.md)를 참고한다.
+이 문서는 `generator/data/generated_analysis/`에 생성되는 가명화 분석용 CSV의 실제 컬럼, 관계, grain과 사용 방법을 설명한다. 원본 식별자와 정확한 날짜가 필요한 생성 검증에는 `generator/data/generated/`와 [원본 데이터 스키마](raw-data-schema.md)를 사용한다. 데이터 생성 기준과 합성 가중치는 [생성 상세 사양](generation-spec.md)를 참고한다.
 
 ## 1. 분석용 출력을 사용하는 이유
 
@@ -8,8 +8,8 @@
 
 | 목적 | 사용할 출력 |
 |---|---|
-| 추천 Feature 설계, 사용량 분석, 요금제·혜택 비교 | `data/generated_analysis/` |
-| 생성 결과 검증, 원본 ID 추적, 정확한 시작일 확인 | `data/generated/` |
+| 추천 Feature 설계, 사용량 분석, 요금제·혜택 비교 | `generator/data/generated_analysis/` |
+| 생성 결과 검증, 원본 ID 추적, 정확한 시작일 확인 | `generator/data/generated/` |
 
 분석용 디렉터리에는 원본과 동일한 이름의 CSV 14개와 `analysis_manifest.json`이 생성된다. 매니페스트에는 기준일, 변환 설명과 테이블별 행 수가 기록된다.
 
@@ -148,7 +148,7 @@ internet_benefit_discount_id
 | `internet_bundle_discount_rules.csv` | 총액·정액·인터넷 할인 정책 구간 |
 | `premium_family_discount_rules.csv` | 프리미엄 가족결합 정책 |
 
-각 컬럼과 enum의 상세 의미는 [원본 데이터 스키마의 상세 데이터 사전](data-schema.md#3-상세-데이터-사전)을 그대로 적용한다.
+각 컬럼과 enum의 상세 의미는 [원본 데이터 스키마의 상세 데이터 사전](raw-data-schema.md#3-상세-데이터-사전)을 그대로 적용한다.
 
 ## 4. 관계와 카디널리티
 
@@ -358,4 +358,4 @@ LEFT JOIN service_usage su
 7. `user_discounts`는 할인 적용 여부이며 금액은 정책 테이블로 계산한다.
 8. `user_services`는 실제 선택 서비스이고 `plan_benefits`는 선택 가능한 후보다.
 9. 가족·서비스·사용량 테이블을 한 번에 조인하기 전에 각각 필요한 grain으로 집계해야 중복 합산을 피할 수 있다.
-10. 할인 계산 규칙과 현재 데이터의 분석 범위는 [원본 데이터 스키마의 할인 계산 주의사항](data-schema.md#5-할인-계산-시-주의사항)을 동일하게 적용한다.
+10. 할인 계산 규칙과 현재 데이터의 분석 범위는 [원본 데이터 스키마의 할인 계산 주의사항](raw-data-schema.md#5-할인-계산-시-주의사항)을 동일하게 적용한다.

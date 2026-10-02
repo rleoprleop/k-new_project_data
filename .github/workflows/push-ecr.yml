@@ -4,20 +4,22 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - "Dockerfile"
+      - "deploy/docker/Dockerfile"
       - ".dockerignore"
       - "db/**"
       - "pipeline/**"
       - "deploy/lambda/handler.py"
+      - "deploy/lambda/test_handler.py"
       - ".github/workflows/push-ecr.yml"
   pull_request:
     branches: [ "main" ]
     paths:
-      - "Dockerfile"
+      - "deploy/docker/Dockerfile"
       - ".dockerignore"
       - "db/**"
       - "pipeline/**"
       - "deploy/lambda/handler.py"
+      - "deploy/lambda/test_handler.py"
       - ".github/workflows/push-ecr.yml"
   workflow_dispatch:
 
@@ -68,7 +70,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Dockerfile
+          file: ./deploy/docker/Dockerfile
           platforms: linux/amd64
           provenance: false
           sbom: false

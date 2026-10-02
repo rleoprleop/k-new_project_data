@@ -22,9 +22,9 @@ AI는 SQL을 작성하거나 수정하지 않습니다. AI가 반환할 수 있�
 5. AI가 SQL 문자열을 반환해도 무시합니다.
 6. 결과 행 수가 `max_rows`를 넘으면 실패시키거나 사전 정의된 제한을 적용합니다.
 
-운영 workflow는 [`operations-query-catalog.csv`](../query-catalogs/operations-query-catalog.csv)와
+운영 workflow는 [`operations-query-catalog.csv`](query-catalogs/operations-query-catalog.csv)와
 `n8n_operations` 계정을 사용합니다. 개인화 workflow는
-[`personalization-query-catalog.csv`](../query-catalogs/personalization-query-catalog.csv)와
+[`personalization-query-catalog.csv`](query-catalogs/personalization-query-catalog.csv)와
 `n8n_personalization` 계정을 사용합니다.
 
 개인화의 사용자 단위 쿼리는 `user_id`와 `name`을 함께 반환합니다. 이름을 가져오기 위한

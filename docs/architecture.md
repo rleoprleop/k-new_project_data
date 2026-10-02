@@ -1,4 +1,4 @@
-# 목표 데이터 아키텍처
+# 데이터 아키텍처
 
 ## 확정 범위
 
@@ -77,3 +77,10 @@ Star Schema는 조인 경로와 grain을 고정해 쿼리를 단순하게 만들
 Lambda가 고정 IP 없이 공개 RDS에 연결해야 하면 보안 그룹을 IP로 제한하기 어렵습니다.
 이 경우 Lambda를 VPC에 두고 RDS 보안 그룹을 Lambda 보안 그룹에서만 허용하는 구성이
 안전합니다.
+
+## 구현과 실행 문서
+
+- [DB 계층과 객체](../db/README.md)
+- [배치 실행·날짜·재실행 규칙](../pipeline/README.md)
+- [Lambda 구성과 검증](../deploy/README.md)
+- [n8n 조회 계약](integration/n8n-fixed-query-contract.md)

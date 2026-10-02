@@ -1,36 +1,31 @@
-# Project Documentation
+# 프로젝트 문서
 
-프로젝트 설계 근거와 협업 문서를 관리합니다. 실행 방법과 테이블 구현은 각 모듈 README를 기준으로 하며, 이 폴더는 왜 그렇게 설계했는지를 기록합니다.
+프로젝트 전체 설계와 데이터 정의, 외부 연동 계약, 실행 절차를 모아 둡니다. 각 모듈의 역할과 주요 파일은 해당 폴더 README에서 설명하고, 이곳에서는 여러 모듈을 연결하는 설계와 상세 명세를 확인합니다.
 
-## 현재 기준 문서
+## 읽는 목적에 따라 선택하기
 
-| 문서 | 내용 |
+| 알고 싶은 내용 | 읽을 문서 |
 | --- | --- |
-| [목표 데이터 아키텍처](architecture/target-data-architecture.md) | 확정 DW/DM, 이름 처리, 권한, 공개 RDS 기준 |
-| [n8n 고정 쿼리 계약](integration/n8n-fixed-query-contract.md) | AI query ID 선택과 n8n 실행 규칙 |
-| [운영 쿼리 카탈로그](query-catalogs/operations-query-catalog.csv) | 운영 workflow가 실행할 고정 SQL |
-| [개인화 쿼리 카탈로그](query-catalogs/personalization-query-catalog.csv) | 개인화 workflow가 실행할 고정 SQL |
-| [예시 고객 선정 쿼리](customer-selection.md) | YouTube 혜택, 사용량·요금제 불일치, 프리미엄 가족결합·총액결합 사례 고객 선정 |
+| 전체 데이터 흐름과 운영·개인화 분리 이유 | [데이터 아키텍처](architecture.md) |
+| 처음부터 로컬에서 생성·적재·검증하기 | [로컬 실행 가이드](guides/local-run.md) |
+| S3·RDS·ECR·Lambda를 연결해 실행하기 | [AWS 배포 가이드](guides/aws-deployment.md) |
+| 합성 분포와 요금제·혜택·결합 생성 규칙 | [생성 상세 사양](data/generation-spec.md) |
+| 원본 CSV의 컬럼·키·관계·NULL 의미 | [원본 데이터 명세](data/raw-data-schema.md) |
+| 선택적 가명화 분석 CSV의 변환과 사용법 | [분석용 데이터 명세](data/analysis-data-schema.md) |
+| AI가 쿼리를 선택하고 n8n이 실행하는 규칙 | [n8n 고정 쿼리 계약](integration/n8n-fixed-query-contract.md) |
+| 운영 영역에서 실행할 고정 SQL | [운영 쿼리 카탈로그](integration/query-catalogs/operations-query-catalog.csv) |
+| 개인화 영역에서 실행할 고정 SQL | [개인화 쿼리 카탈로그](integration/query-catalogs/personalization-query-catalog.csv) |
+| 적재 확인과 사례별 고객 조회 | [도구 사용 안내](../tools/README.md) |
 
-## Git 추적 기준
+## 폴더 구성
 
-다른 환경에서도 설계와 파이프라인을 재현하는 데 필요한 현재 기준 문서는 Git에 포함합니다.
+- `data/`: 생성 규칙과 원본·분석용 CSV 데이터 사전
+- `integration/`: n8n 실행 계약과 쿼리 카탈로그
+- `guides/`: 여러 모듈을 이어 실행하는 단계별 절차
+- `architecture.md`: 프로젝트 전체 설계와 설계 근거
 
-- `architecture/`: 현재 데이터 아키텍처
-- `integration/`: n8n 연동 계약
-- `query-catalogs/`: 운영·개인화 고정 쿼리 카탈로그
-- `customer-selection.md`: 추천 시연용 예시 고객 선정 기준, SQL 파일 링크와 실행 방법
-- `../tools/customer-selection/`: 사례별로 독립 실행하는 고객 선정 SQL
-- `../generator/docs/`: CSV 생성 기준과 데이터 스키마
+쿼리 카탈로그 CSV는 생성 데이터가 아니라 관리하는 SQL 명세이므로 Git에 포함합니다. 과거 문서·DOCX와 전용 생성 도구는 `.local/archive/`에 보관하며 현재 기준 문서에서 분리합니다.
 
-다음 항목은 로컬 참고 자료 또는 재생성 가능한 산출물이므로 Git에 포함하지 않습니다.
+## 문서의 역할 나누기
 
-- `archive/`: 현재 구현 이전의 문서 초안과 생성 DOCX
-- `tools/`: 보관 DOCX 전용 생성 도구
-- `../generator/data/`: 생성 CSV
-- `../generator/archive/`: 생성 데이터 로컬 보관본
-
-가상 환경, 캐시, 비밀 설정 파일과 IDE 설정도 저장소 루트의 `.gitignore`에 따라 제외합니다.
-
-세부 테이블과 실행 순서는 [`db/README.md`](../db/README.md)와
-[`pipeline/README.md`](../pipeline/README.md)를 기준으로 합니다.
+입력·출력과 실행 옵션은 모듈 README, 컬럼과 업무 규칙은 데이터 명세, 여러 도구를 사용하는 실행 순서는 가이드에 기록합니다. 같은 규칙을 여러 문서에 복사하기보다 해당 기준 문서를 링크합니다.
