@@ -10,6 +10,7 @@
 | [n8n 고정 쿼리 계약](integration/n8n-fixed-query-contract.md) | AI query ID 선택과 n8n 실행 규칙 |
 | [운영 쿼리 카탈로그](query-catalogs/operations-query-catalog.csv) | 운영 workflow가 실행할 고정 SQL |
 | [개인화 쿼리 카탈로그](query-catalogs/personalization-query-catalog.csv) | 개인화 workflow가 실행할 고정 SQL |
+| [예시 고객 선정 쿼리](customer-selection.md) | YouTube 혜택, 사용량·요금제 불일치, 프리미엄 가족결합·총액결합 사례 고객 선정 |
 
 ## Git 추적 기준
 
@@ -18,6 +19,8 @@
 - `architecture/`: 현재 데이터 아키텍처
 - `integration/`: n8n 연동 계약
 - `query-catalogs/`: 운영·개인화 고정 쿼리 카탈로그
+- `customer-selection.md`: 추천 시연용 예시 고객 선정 기준, SQL 파일 링크와 실행 방법
+- `../tools/customer-selection/`: 사례별로 독립 실행하는 고객 선정 SQL
 - `../generator/docs/`: CSV 생성 기준과 데이터 스키마
 
 다음 항목은 로컬 참고 자료 또는 재생성 가능한 산출물이므로 Git에 포함하지 않습니다.
