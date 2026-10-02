@@ -3,25 +3,31 @@
 ## 확정 범위
 
 - 하나의 PostgreSQL DB 안에서 운영과 개인화를 별도 스키마로 분리합니다.
-- S3의 14개 CSV가 원본이며 영구 Landing은 사용하지 않습니다.
+- 원본은 14개 논리 테이블의 CSV입니다. 전체 배치는 CSV 14개, 증분 초기화는 스냅샷 CSV 13개, 증분/정정은 날짜별 `content_usage` 파티션을 사용합니다. 로컬은 생성 파일을 직접 읽고 AWS에서는 S3를 원본 저장소로 사용합니다.
 - CSV는 배치 세션의 임시 staging에만 적재되고 트랜잭션 종료 시 삭제됩니다.
-- 운영과 개인화는 별도 Lambda/실행 경로, 워터마크, n8n workflow, DB 계정을 사용합니다.
+- 현재 AWS 배포는 한 Lambda에서 같은 파이프라인으로 운영·개인화를 함께 처리합니다. 두 영역은 같은 배치 트랜잭션, advisory lock과 `content_usage_daily` 워터마크를 공유하며, n8n workflow와 조회 계정은 분리합니다.
 - 현재 요금제만 사용하며 요금제 이력 스냅샷은 만들지 않습니다.
 - `subscription_start_date <= 기준일`을 가입자로 정의합니다. 취소는 없다고 가정합니다.
 - 사용량은 `usage_date >= subscription_start_date`인 행만 DW에 적재합니다. 가입일 이전
   원본 행은 S3/임시 staging에서 삭제하지 않고 DW 적재 대상에서만 제외합니다.
-- 상세 사용량은 개인화만, category 사용량은 운영만 사용합니다.
+- 개인화는 category/detail 상세 사용량을 유지하고, 운영은 detail을 제외한 category 사용량을 집계합니다.
 
 ## 흐름
 
 ```text
-S3 CSV 14개
-  ├─ 운영 실행: 원본 ID를 메모리/pg_temp에서 즉시 HMAC → dw_operations → dm_operations
-  │                                                   → ai_operations → n8n_operations
-  └─ 개인화 실행: user_id·name·detail 유지             → dw_personalization
-                                                      → dm_personalization
-                                                      → ai_personalization → n8n_personalization
+로컬 CSV 또는 S3 CSV (스냅샷 13개 + 콘텐츠 사용량)
+  → 공통 실행 파이프라인 (AWS: 한 Lambda → PowerShell → psql)
+  → pg_temp staging
+    ├─ 운영 변환: 연결 키 HMAC·category 집계 → dw_operations → dm_operations
+    │                                                       → ai_operations → n8n_operations
+    └─ 개인화 변환: user_id·name·detail 유지 → dw_personalization → dm_personalization
+                                                            → ai_personalization → n8n_personalization
 ```
+
+초기화는 스냅샷만 적재하고, 이후 콘텐츠 사용량을 날짜별로 추가하거나 정정합니다.
+두 영역의 변환·품질 검사가 모두 성공하면 배치를 커밋하고 증분 워터마크를 갱신합니다.
+공통 상품·할인·정책 마스터는 `db/transform/common/010_load_master.sql`이 두 DW에
+각각 적재합니다. 별도 `dw_common` 스키마는 만들지 않습니다.
 
 ## DW
 

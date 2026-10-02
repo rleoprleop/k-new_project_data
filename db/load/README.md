@@ -34,6 +34,7 @@ PowerShell 실행기는 CSV 폴더의 절대 경로를 psql 변수 `input_csv_di
 | `010_load_full_staging.psql` | 14개 전체 CSV staging |
 | `020_load_incremental_content_usage.psql` | 날짜 파티션 사용량과 manifest staging |
 
-S3가 원본의 단일 기준점입니다. AWS 실행 환경에서는 S3 객체를 작업 디렉터리로 내려받은 뒤
-동일한 psql 스크립트를 실행합니다. 운영 Lambda가 처리하는 원본 ID는 staging 밖으로
-저장하지 않고 운영 DW 적재 시 즉시 HMAC 키로 치환합니다.
+로컬 실행에서는 생성 CSV를 직접 읽고, AWS 실행 환경에서는 S3 객체를 작업 디렉터리로
+내려받은 뒤 동일한 psql 스크립트를 실행합니다. 현재 Lambda는 운영·개인화 DW를 함께
+처리합니다. 운영 DW에는 연결 키를 HMAC으로 치환하고 이름을 제외하여 저장하며,
+개인화 DW에는 원본 `user_id`·`name`과 연결 키를 유지합니다.

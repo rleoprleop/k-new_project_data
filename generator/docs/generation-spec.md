@@ -21,9 +21,9 @@ KT 모바일 요금제, 사용량, 선택 혜택, 인터넷-모바일 결합 추
 - `data/generated/`: 원본 성격의 합성 데이터. 내부 Raw 적재와 생성 검증용입니다.
 - `data/generated_analysis/`: 분석·추천 Feature 설계용 데이터입니다. 이름과 원본 키를 제외하고, 사용자·가족·결합 키를 HMAC 기반 분석 키로 바꿉니다.
 
-`data/generated/`는 로컬 개발 환경의 **Data Lake** 역할을 합니다. 파이프라인은 이 원본 CSV를 PostgreSQL `landing.raw_*`에 적재한 뒤 DW·DM을 생성합니다. 두 출력 디렉터리의 CSV는 재현 가능한 생성물이므로 Git에는 올리지 않습니다.
+`data/generated/`는 로컬 개발 환경의 **Data Lake** 역할을 합니다. 파이프라인은 이 원본 CSV를 PostgreSQL `pg_temp.stg_*`에 임시 적재한 뒤 운영·개인화 DW·DM을 생성합니다. staging은 배치 트랜잭션 종료 시 삭제됩니다. `data/generated_analysis/`는 별도 분석용 선택 출력이며 파이프라인 입력으로 사용하지 않습니다. 두 출력 디렉터리의 CSV는 재현 가능한 생성물이므로 Git에는 올리지 않습니다.
 
-각 디렉터리의 최종 CSV는 다음 14개입니다.
+원본·분석용 출력의 논리 테이블은 다음 14개입니다. 원본의 기본 `single` 방식과 분석용 출력은 각각 CSV 14개를 만들며, 원본 `daily` 방식은 스냅샷 CSV 13개와 날짜별 `content_usage` 파티션을 만듭니다. `both` 방식은 단일 콘텐츠 파일과 날짜별 파티션을 함께 만듭니다.
 
 ```text
 users, families, bundle_discount_compositions,

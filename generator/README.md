@@ -9,7 +9,7 @@ KT 모바일 요금제, 사용량, 혜택과 결합 데이터를 합성해 로�
 - 선택적으로 가명화된 분석용 CSV를 `data/generated_analysis/`에 저장합니다.
 - PK·FK, 정책 조건, 사용량 합계와 주요 분포를 검증합니다.
 
-파이프라인은 `data/generated/`의 원본 CSV를 PostgreSQL `landing.raw_*`에 적재해 운영·개인화 DW/DM을 생성합니다. `generator/data/`는 재생성 가능한 출력이므로 Git에서 제외합니다.
+파이프라인은 `data/generated/`의 원본 CSV를 PostgreSQL `pg_temp.stg_*`에 임시 적재해 운영·개인화 DW/DM을 생성합니다. staging은 배치 트랜잭션 종료 시 삭제됩니다. 분석용 CSV는 별도 분석을 위한 선택 출력이며 파이프라인 입력으로 사용하지 않습니다. `generator/data/`는 재생성 가능한 출력이므로 Git에서 제외합니다.
 
 ## 기본 생성 범위
 
