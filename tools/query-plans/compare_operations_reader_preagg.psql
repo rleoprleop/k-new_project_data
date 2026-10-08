@@ -1,0 +1,217 @@
+-- Measure permanent preaggregation view versus frozen baseline as n8n_operations.
+-- No permanent DDL, reader grants, source writes or role-setting changes.
+-- READ WRITE is used only to create/drop this script's temporary tables.
+-- All query measurements run in one REPEATABLE READ READ ONLY transaction.
+-- Each captured EXPLAIN is a separate DO statement, retaining the login's timeout.
+-- Keep scalar timing/row-count metrics only; no stored or printed full execution plans.
+-- Run without an existing transaction. On error/cancellation: rollback;
+-- Requires the 130 view migration already applied by the pipeline or DB owner.
+--   \set plan_month 2026-08-01
+--   \i C:/kt_nd/tools/query-plans/compare_operations_reader_preagg.psql
+\set ON_ERROR_STOP on
+\pset pager off
+\if :{?QUIET}
+    \set reader_internal_previous_quiet :QUIET
+\else
+    \set reader_internal_previous_quiet off
+\endif
+\set QUIET on
+\if :{?plan_month}
+\else
+    \set plan_month 2026-08-01
+\endif
+\if :{?reader_plan_repeats}
+\else
+    \set reader_plan_repeats 5
+\endif
+
+\qecho 'Login environment before measurement settings (no ALTER ROLE is performed):'
+select session_user as login_role, current_user as execution_role,
+       current_setting('work_mem') as login_work_mem,
+       current_setting('plan_cache_mode') as login_plan_cache_mode,
+       current_setting('jit') as login_jit,
+       current_setting('statement_timeout') as login_statement_timeout,
+       current_setting('default_transaction_read_only') as login_default_read_only;
+
+begin read write;
+set local lock_timeout = '5s';
+do $$
+begin
+    if current_user <> 'n8n_operations' or session_user <> 'n8n_operations' then
+        raise exception 'Connect directly as n8n_operations; SET ROLE from an admin is not this measurement environment.';
+    end if;
+    if to_regclass('ai_operations.v_customer_monthly_usage_filtered_preagg') is null then
+        raise exception 'Permanent preaggregation view is missing. Apply the 130 migration with an admin first.';
+    end if;
+    if not has_table_privilege(current_user,
+            'ai_operations.v_customer_monthly_usage_filtered_preagg', 'SELECT') then
+        raise exception 'n8n_operations requires SELECT on the permanent view through role_operations_reader.';
+    end if;
+end
+$$;
+
+-- Reserved temporary names; remove leftovers from an interrupted previous run.
+-- Look up existing temp tables first so a new session does not print pg_temp notices.
+do $$
+declare
+    measurement_table record;
+begin
+    for measurement_table in
+        select relname from pg_class
+        where relnamespace = pg_my_temp_schema()
+          and relkind = 'r'
+          and relname in ('reader_preagg_config', 'reader_preagg_ranges', 'reader_preagg_results')
+    loop
+        execute format('drop table pg_temp.%I', measurement_table.relname);
+    end loop;
+end
+$$;
+create temporary table reader_preagg_config (
+    repeats integer not null check (repeats between 1 and 10)
+) on commit preserve rows;
+insert into reader_preagg_config values (:'reader_plan_repeats'::integer);
+create temporary table reader_preagg_ranges (
+    period_name text primary key,
+    start_date date not null,
+    end_date date not null,
+    check (start_date = date_trunc('month', start_date)::date),
+    check (end_date = date_trunc('month', end_date)::date),
+    check (start_date < end_date),
+    check (
+        (period_name = 'ONE_MONTH' and end_date = start_date + interval '1 month')
+        or (period_name = 'SIX_MONTH' and end_date = start_date + interval '6 months')
+        or (period_name = 'ONE_YEAR' and end_date = start_date + interval '1 year')
+        or period_name = 'FULL_PERIOD'
+    )
+) on commit preserve rows;
+create temporary table reader_preagg_results (
+    query_id text not null,
+    period_name text not null,
+    variant text not null,
+    repeat_no integer not null,
+    planning_ms numeric not null,
+    execution_ms numeric not null,
+    result_rows numeric not null,
+    primary key (query_id, period_name, variant, repeat_no)
+) on commit preserve rows;
+commit;
+
+begin transaction isolation level repeatable read read only;
+set local lock_timeout = '5s';
+set local plan_cache_mode = 'force_custom_plan';
+\ir measurement_settings.sql
+set local jit = off;
+-- Normally inherit n8n_operations statement_timeout=30s for EACH capture.
+\if :{?reader_plan_timeout}
+    set local statement_timeout = :'reader_plan_timeout';
+\endif
+insert into reader_preagg_ranges values
+    ('ONE_MONTH', :'plan_month'::date,
+     (:'plan_month'::date + interval '1 month')::date),
+    ('SIX_MONTH', (:'plan_month'::date - interval '5 months')::date,
+     (:'plan_month'::date + interval '1 month')::date),
+    ('ONE_YEAR', (:'plan_month'::date - interval '11 months')::date,
+     (:'plan_month'::date + interval '1 month')::date);
+insert into reader_preagg_ranges
+select 'FULL_PERIOD', min(calendar_month),
+       (max(calendar_month) + interval '1 month')::date
+from ai_operations.v_customer_monthly_category_usage;
+
+\qecho '002_005 | permanent view versus frozen baseline | operational login | read-only measurement'
+select session_user as login_role, current_user as execution_role,
+       current_setting('server_version') as server_version,
+       current_setting('work_mem') as work_mem,
+       current_setting('hash_mem_multiplier') as hash_mem_multiplier,
+       current_setting('plan_cache_mode') as plan_cache_mode,
+       current_setting('jit') as jit,
+       current_setting('statement_timeout') as statement_timeout,
+       current_setting('transaction_read_only') as transaction_read_only,
+       current_setting('max_parallel_workers_per_gather') as max_parallel_workers_per_gather;
+select period_name, start_date, end_date as end_date_exclusive
+from reader_preagg_ranges order by period_name;
+select repeats from reader_preagg_config;
+
+select format('deallocate %I;', name)
+from pg_prepared_statements
+where name in ('kt_nd_ops_plan_002', 'kt_nd_ops_plan_005',
+               'kt_nd_ops_filtered_002', 'kt_nd_ops_filtered_005')
+\gexec
+\ir ops_analysis_002.sql
+\ir ops_analysis_005.sql
+\ir ops_analysis_002_optimized.sql
+\ir ops_analysis_005_optimized.sql
+
+\qecho 'One warm-up per query/range/variant; then alternating measured repeats. Each DO captures one execution.'
+select format(
+    $capture_statement$
+    do $capture$
+    declare
+        captured_plan jsonb;
+    begin
+        execute %L into captured_plan;
+        if %s > 0 then
+            insert into pg_temp.reader_preagg_results
+            values (%L, %L, %L, %s,
+                    (captured_plan -> 0 ->> 'Planning Time')::numeric,
+                    (captured_plan -> 0 ->> 'Execution Time')::numeric,
+                    (captured_plan -> 0 -> 'Plan' ->> 'Actual Rows')::numeric);
+        end if;
+    end
+    $capture$;
+    $capture_statement$,
+    format(
+        'explain (analyze, buffers, verbose, settings, summary, timing off, format json) execute %I(%L::date, %L::date)',
+        q.statement_name, r.start_date, r.end_date
+    ),
+    n.repeat_no, q.query_id, r.period_name, q.variant, n.repeat_no
+)
+from reader_preagg_config config
+cross join lateral generate_series(0, config.repeats) as n(repeat_no)
+cross join reader_preagg_ranges r
+cross join (values
+    ('OPS_ANALYSIS_002', 1, 'ORIGINAL', 'kt_nd_ops_plan_002'),
+    ('OPS_ANALYSIS_002', 2, 'FILTERED_PREAGG', 'kt_nd_ops_filtered_002'),
+    ('OPS_ANALYSIS_005', 1, 'ORIGINAL', 'kt_nd_ops_plan_005'),
+    ('OPS_ANALYSIS_005', 2, 'FILTERED_PREAGG', 'kt_nd_ops_filtered_005')
+) as q(query_id, run_order, variant, statement_name)
+order by n.repeat_no, q.query_id, r.period_name,
+         case when mod(n.repeat_no, 2) = 0 then q.run_order else -q.run_order end
+\gexec
+
+\qecho 'Performance summary (milliseconds): positive time_reduction_pct means faster.'
+with metrics as (
+    select query_id, period_name, variant, count(*) as measured_runs,
+           percentile_cont(0.5) within group (
+               order by execution_ms::double precision
+           ) as median_ms,
+           min(execution_ms) as min_ms,
+           max(execution_ms) as max_ms
+    from reader_preagg_results
+    group by query_id, period_name, variant
+)
+select b.query_id, b.period_name, b.measured_runs,
+       round(b.median_ms::numeric, 3) as original_median_ms,
+       round(a.median_ms::numeric, 3) as filtered_median_ms,
+       round(((b.median_ms - a.median_ms) / nullif(b.median_ms, 0) * 100)::numeric, 2)
+           as time_reduction_pct,
+       b.min_ms as original_min_ms, b.max_ms as original_max_ms,
+       a.min_ms as filtered_min_ms, a.max_ms as filtered_max_ms
+from metrics b
+join metrics a using (query_id, period_name)
+where b.variant = 'ORIGINAL' and a.variant = 'FILTERED_PREAGG'
+order by b.query_id, b.period_name;
+
+deallocate kt_nd_ops_plan_002;
+deallocate kt_nd_ops_plan_005;
+deallocate kt_nd_ops_filtered_002;
+deallocate kt_nd_ops_filtered_005;
+rollback;
+
+begin read write;
+drop table pg_temp.reader_preagg_results,
+           pg_temp.reader_preagg_ranges,
+           pg_temp.reader_preagg_config;
+commit;
+\qecho 'Measurement complete: temporary results removed; permanent view and grants remain installed. Session settings restored.'
+\set QUIET :reader_internal_previous_quiet
+\unset reader_internal_previous_quiet

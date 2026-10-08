@@ -1,0 +1,100 @@
+-- Print full plans for frozen original/final OPS_ANALYSIS_002 and 005 queries.
+-- Connect directly as n8n_operations with no existing transaction.
+-- Requires the permanent 130 view. No DDL, grants or data writes.
+-- Default: six months, ANALYZE enabled; each SELECT executes once, without warm-up.
+-- On error/cancellation: rollback; before retrying.
+\set ON_ERROR_STOP on
+\pset pager off
+\if :{?plan_start_date}
+\else
+    \set plan_start_date 2026-03-01
+\endif
+\if :{?plan_end_date_exclusive}
+\else
+    \set plan_end_date_exclusive 2026-09-01
+\endif
+\if :{?plan_analyze}
+\else
+    \set plan_analyze true
+\endif
+
+begin transaction isolation level repeatable read read only;
+set local lock_timeout = '5s';
+set local plan_cache_mode = 'force_custom_plan';
+\ir measurement_settings.sql
+set local jit = off;
+\if :{?reader_plan_timeout}
+    set local statement_timeout = :'reader_plan_timeout';
+\endif
+
+do $$
+begin
+    if current_user <> 'n8n_operations' or session_user <> 'n8n_operations' then
+        raise exception 'Connect directly as n8n_operations.';
+    end if;
+    if to_regclass('ai_operations.v_customer_monthly_usage_filtered_preagg') is null then
+        raise exception 'Apply the 130 view migration through the pipeline or a DB owner first.';
+    end if;
+    if not has_table_privilege(current_user,
+            'ai_operations.v_customer_monthly_usage_filtered_preagg', 'SELECT') then
+        raise exception 'n8n_operations requires SELECT on the permanent view.';
+    end if;
+end
+$$;
+
+select (:'plan_start_date'::date = date_trunc('month', :'plan_start_date'::date)::date
+    and :'plan_end_date_exclusive'::date = date_trunc('month', :'plan_end_date_exclusive'::date)::date
+    and :'plan_start_date'::date < :'plan_end_date_exclusive'::date) as plan_range_valid
+\gset
+\if :plan_range_valid
+\else
+    do $$ begin raise exception 'Use month-first dates with start before end.'; end $$;
+\endif
+select :'plan_analyze'::boolean as plan_analyze_enabled
+\gset
+
+select session_user as login_role, current_user as execution_role,
+       current_setting('server_version') as server_version,
+       current_setting('work_mem') as work_mem,
+       current_setting('plan_cache_mode') as plan_cache_mode,
+       current_setting('jit') as jit,
+       current_setting('statement_timeout') as statement_timeout,
+       current_setting('transaction_read_only') as transaction_read_only,
+       :'plan_start_date'::date as start_date,
+       :'plan_end_date_exclusive'::date as end_date_exclusive;
+
+select format('deallocate %I;', name)
+from pg_prepared_statements
+where name in ('kt_nd_ops_plan_002', 'kt_nd_ops_plan_005',
+               'kt_nd_ops_filtered_002', 'kt_nd_ops_filtered_005')
+\gexec
+\ir ops_analysis_002.sql
+\ir ops_analysis_002_optimized.sql
+\ir ops_analysis_005.sql
+\ir ops_analysis_005_optimized.sql
+
+select format(
+    'select %L as query_id, %L as variant; explain (%s) execute %I(%L::date, %L::date);',
+    q.query_id, q.variant,
+    case when :'plan_analyze_enabled'::boolean then
+        'analyze, buffers, verbose, settings, summary, timing off'
+    else 'verbose, settings, summary' end,
+    q.statement_name, :'plan_start_date'::date, :'plan_end_date_exclusive'::date
+)
+from (values
+    ('OPS_ANALYSIS_002', 1, 'ORIGINAL', 'kt_nd_ops_plan_002'),
+    ('OPS_ANALYSIS_002', 2, 'OPTIMIZED', 'kt_nd_ops_filtered_002'),
+    ('OPS_ANALYSIS_005', 1, 'ORIGINAL', 'kt_nd_ops_plan_005'),
+    ('OPS_ANALYSIS_005', 2, 'OPTIMIZED', 'kt_nd_ops_filtered_005')
+) as q(query_id, run_order, variant, statement_name)
+order by q.query_id, q.run_order
+\gexec
+
+deallocate kt_nd_ops_plan_002;
+deallocate kt_nd_ops_plan_005;
+deallocate kt_nd_ops_filtered_002;
+deallocate kt_nd_ops_filtered_005;
+rollback;
+\unset plan_range_valid
+\unset plan_analyze_enabled
+\qecho 'Plan capture complete. Transaction settings restored; permanent objects unchanged.'
