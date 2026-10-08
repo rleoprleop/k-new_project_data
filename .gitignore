@@ -14,6 +14,9 @@
 generator/data/
 .local/
 
+# Temporary archive of unused project files
+/tmp/
+
 # Editor and operating-system files
 .vscode/
 .idea/
