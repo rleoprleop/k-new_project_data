@@ -4,12 +4,17 @@
 
 | 영역 | 파일 | 뷰 수 | 컬럼 수 |
 | --- | --- | ---: | ---: |
-| 운영 | [operations-view-schema.csv](operations-view-schema.csv) | 10 | 58 |
+| 운영 | [operations-view-schema.csv](operations-view-schema.csv) | 11 | 62 |
 | 개인화 | [personalization-view-schema.csv](personalization-view-schema.csv) | 12 | 87 |
 
 기준은 저장소의 [AI 뷰 정의](../../../db/schema/060_ai_views_roles.sql)와 해당 DW·DM DDL 및 변환 SQL입니다. `max_age`의 NULL 의미에는 [연령 상한 마이그레이션](../../../db/schema/070_allow_open_ended_age_benefits.sql)을 반영합니다. 실제 배포 DB의 메타데이터를 조회한 결과는 아니므로 배포 변경이 있다면 적용된 SQL과 대조해야 합니다.
 
 이 CSV는 실제 고객 행이나 생성 데이터를 포함하지 않는 관리용 스키마 명세이며, 쿼리 카탈로그처럼 Git에 포함합니다. UTF-8 인코딩, 쉼표 구분, 첫 행 헤더를 사용하며 모든 필드를 큰따옴표로 감쌉니다.
+
+운영 고객·월 합계 뷰는 [130 마이그레이션](../../../db/schema/130_install_operations_monthly_preagg_view.sql)의
+정의도 반영합니다. `v_customer_monthly_usage_filtered_preagg`의 네 컬럼은
+가명 고객 키·월·총사용량·기간 필터용 숫자 월 키이며 `OPS_ANALYSIS_002`·`005`가 사용합니다.
+일반 뷰라서 기초 DM 변경을 조회 시 계산하며 별도 갱신 배치는 없습니다.
 
 ## CSV 필드
 

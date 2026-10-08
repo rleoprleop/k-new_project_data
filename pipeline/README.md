@@ -33,6 +33,22 @@
 
 가입일 이전 사용량은 원본에서 삭제하지 않고 DW 적재 대상에서 제외합니다. 운영 DW는 이름을 제외하고 연결 키를 가명화하며 개인화 DW는 원본 사용자 ID·이름·상세 사용량을 유지합니다.
 
+### 운영 고객·월 집계 뷰의 스키마 반영
+
+세 SQL 진입점은 060·070·080 이후
+[130 마이그레이션](../db/schema/130_install_operations_monthly_preagg_view.sql)을 실행합니다.
+운영 002·005가 사용하는 일반 집계 뷰와 role_operations_reader SELECT 권한을 구성합니다.
+Lambda의 initialize는 015, incremental/correction은 020을 사용하므로 같은 정의가 적용됩니다.
+뷰는 현재 DM을 조회할 때 계산하고 사용량 적재·정정 로직을 추가하지 않습니다.
+배치의 030_reader_permissions.sql에서 운영 역할/LOGIN의 새 뷰 조회 권한과 컬럼 계약을 확인합니다.
+
+130은 다른 DDL처럼 배치 트랜잭션 전에 적용되며 이후 적재 실패에도 뷰·권한은 남습니다.
+새 코드가 포함된 Lambda 이미지로 재배포해야 실행 경로에 반영됩니다.
+health·check는 스키마를 적용하지 않고 Handler가 ALREADY_PROCESSED를 반환한 요청도
+파이프라인을 호출하지 않습니다. 기존 DB의 스키마만 먼저 갱신할 때는 관리자 psql에서
+[130 스키마 파일](../db/schema/130_install_operations_monthly_preagg_view.sql)을
+[DB 적용 안내](../db/README.md#운영-고객월-선집계-뷰-적용)에 따라 트랜잭션에서 적용합니다.
+
 ## 로컬 실행
 
 PostgreSQL 15 이상과 PATH의 `psql`이 필요합니다. 연결 문자열과 키는 환경의 비밀 설정으로 전달하고 파일·로그·Git에 저장하지 않습니다. 아래 명령은 준비된 세션의 `$env:KT_ND_LOCAL_CONNECTION_STRING`을 사용합니다.

@@ -26,6 +26,14 @@ Actions → **Build and push Lambda image**의 모든 단계가 초록색인지 
 태그 덮어쓰기는 이전 이미지 자동 삭제가 아니므로, 사용 중인 digest를 삭제하지 않는
 수명 주기 정책을 별도로 검토하세요.
 
+운영 집계 뷰의 130번 마이그레이션은 이미지에 포함된 db/와 파이프라인 SQL에 반영됩니다.
+이미 사용 중인 Lambda에는 새 이미지를 배포해야 하며 이미지 업로드만으로 DB가 바뀌지는 않습니다.
+새 이미지의 실제 initialize/incremental/correction 파이프라인 실행에서 뷰·권한이 적용됩니다.
+health·check와 ALREADY_PROCESSED 반환은 이 스키마 적용을 실행하지 않습니다.
+기존 데이터가 있는 DB에는 스키마 적용 목적으로 initialize를 실행하지 않고,
+관리자 psql에서 [130 스키마 파일](../../db/schema/130_install_operations_monthly_preagg_view.sql)을
+[DB 적용 안내](../../db/README.md#운영-고객월-선집계-뷰-적용)에 따라 트랜잭션에서 적용합니다.
+
 ## 2. AWS Console에서 Lambda 생성
 
 1. ECR과 같은 리전에서 Lambda → 함수 → 함수 생성.

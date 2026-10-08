@@ -1,31 +1,283 @@
-﻿"query_id","query_name","description","use_when","parameters","fixed_sql","return_grain","return_columns","unit","max_rows","db_role","limitations","enabled"
-"OPS_001","current_subscriber_count","기준일 현재 가입자 수를 조회","전체 또는 요금제·연령대별 가입자 수를 확인할 때","as_of_date:date","select as_of_date,plan_id,plan_name,age_band,subscriber_count from ai_operations.v_subscriber_current where as_of_date=$1::date order by subscriber_count desc,plan_id,age_band","기준일×요금제×연령대","as_of_date,plan_id,plan_name,age_band,subscriber_count","명","500","role_operations_reader","가입자는 subscription_start_date<=기준일이며 취소는 고려하지 않음","true"
-"OPS_002","plan_adoption","현재 요금제별 가입자 수를 조회","요금제 가입 분포를 확인할 때","as_of_date:date","select plan_id,plan_name,sum(subscriber_count)::integer subscriber_count from ai_operations.v_subscriber_current where as_of_date=$1::date group by plan_id,plan_name order by subscriber_count desc,plan_id","요금제","plan_id,plan_name,subscriber_count","명","200","role_operations_reader","현재 요금제만 사용하며 이력 스냅샷 없음","true"
-"OPS_003","daily_usage_trend","기간 내 일별 사용량과 사용 사용자 수를 조회","일별 사용량 추세를 확인할 때","from_date:date,to_date:date","select calendar_date,round(sum(total_usage_mb),1) total_usage_mb,sum(usage_user_count)::integer segment_user_count from ai_operations.v_daily_usage_segment where calendar_date between $1::date and $2::date group by calendar_date order by calendar_date","일자","calendar_date,total_usage_mb,segment_user_count","MB 소수점 1자리","400","role_operations_reader","segment_user_count는 세그먼트별 중복 합계이므로 고유 가입자 수가 아님","true"
-"OPS_004","monthly_usage_trend","월별 총사용량을 조회","월간 사용량 추세를 확인할 때","from_month:date,to_month:date","select calendar_month,round(sum(total_usage_mb),1) total_usage_mb from ai_operations.v_monthly_usage_segment where calendar_month between date_trunc('month',$1::date)::date and date_trunc('month',$2::date)::date group by calendar_month order by calendar_month","월","calendar_month,total_usage_mb","MB 소수점 1자리","120","role_operations_reader","전체 누적값은 제공하지 않음","true"
-"OPS_005","category_usage","기간 내 카테고리별 사용량을 조회","운영 콘텐츠 카테고리 비중을 확인할 때","from_date:date,to_date:date","select content_category,round(sum(total_usage_mb),1) total_usage_mb from ai_operations.v_daily_usage_segment where calendar_date between $1::date and $2::date group by content_category order by total_usage_mb desc,content_category","카테고리","content_category,total_usage_mb","MB 소수점 1자리","100","role_operations_reader","운영 영역에는 content_detail이 없음","true"
-"OPS_006","plan_age_category_usage","요금제·연령대·카테고리별 월 사용량을 조회","세그먼트별 사용 성향을 비교할 때","year_month:text","select plan_id,plan_name,age_band,content_category,round(total_usage_mb,1) total_usage_mb,usage_user_count,round(average_usage_mb,1) average_usage_mb from ai_operations.v_monthly_usage_segment where calendar_month=to_date($1||'-01','YYYY-MM-DD') order by total_usage_mb desc","월×요금제×연령대×카테고리","plan_id,plan_name,age_band,content_category,total_usage_mb,usage_user_count,average_usage_mb","MB 소수점 1자리","2000","role_operations_reader","현재 요금제 기준","true"
-"OPS_007","high_usage_customers","최근 N일 고사용 가명 고객을 조회","운영 점검용 고사용 고객군이 필요할 때","days:integer,limit:integer","with m as (select max(calendar_date) d from ai_operations.v_customer_daily_usage) select analysis_user_key,round(sum(total_usage_mb),1) total_usage_mb from ai_operations.v_customer_daily_usage cross join m where calendar_date between m.d-$1::integer+1 and m.d group by analysis_user_key order by total_usage_mb desc limit $2::integer","가명 고객","analysis_user_key,total_usage_mb","MB 소수점 1자리","500","role_operations_reader","이름·원본 user_id 조회 불가","true"
-"OPS_008","low_usage_customers","최근 N일 저사용 가명 고객을 조회","저사용 고객군을 확인할 때","days:integer,limit:integer","with m as (select max(calendar_date) d from ai_operations.v_customer_daily_usage) select analysis_user_key,round(sum(total_usage_mb),1) total_usage_mb from ai_operations.v_customer_daily_usage cross join m where calendar_date between m.d-$1::integer+1 and m.d group by analysis_user_key order by total_usage_mb,analysis_user_key limit $2::integer","가명 고객","analysis_user_key,total_usage_mb","MB 소수점 1자리","500","role_operations_reader","사용량이 전혀 없는 고객은 포함하지 않음","true"
-"OPS_009","customer_category_concentration","가명 고객별 월 최다 사용 카테고리와 비중을 조회","카테고리 집중 이용 고객을 찾을 때","year_month:text,limit:integer","with x as (select *,sum(total_usage_mb) over(partition by analysis_user_key,calendar_month) all_mb,row_number() over(partition by analysis_user_key,calendar_month order by total_usage_mb desc,content_category) rn from ai_operations.v_customer_monthly_category_usage where calendar_month=to_date($1||'-01','YYYY-MM-DD')) select analysis_user_key,content_category,round(total_usage_mb,1) total_usage_mb,round(total_usage_mb/nullif(all_mb,0),4) usage_ratio from x where rn=1 order by usage_ratio desc,total_usage_mb desc limit $2::integer","가명 고객×월","analysis_user_key,content_category,total_usage_mb,usage_ratio","MB 소수점 1자리; 비율","500","role_operations_reader","운영 카테고리만 사용","true"
-"OPS_010","family_bundle_summary","가족결합·인터넷 보유 현황을 집계","결합 운영 현황을 확인할 때","","select has_bundle,has_kt_internet,count(*)::integer family_count,sum(member_count)::integer member_count from ai_operations.v_family_current group by has_bundle,has_kt_internet order by family_count desc","결합 상태","has_bundle,has_kt_internet,family_count,member_count","가족·명","20","role_operations_reader","가명 가족 단위 집계","true"
-"OPS_011","service_adoption","선택 서비스별 현재 사용자 수를 조회","서비스 선택 현황을 확인할 때","","select service_id,service_name,service_category,customer_count from ai_operations.v_service_current order by customer_count desc,service_id","서비스","service_id,service_name,service_category,customer_count","명","100","role_operations_reader","서비스 사용량 detail은 개인화 전용","true"
-"OPS_012","discount_distribution","할인별 현재 사용자 수를 조회","할인 적용 현황을 확인할 때","","select discount_id,discount_name,policy_domain,customer_count from ai_operations.v_discount_current order by customer_count desc,discount_id","할인","discount_id,discount_name,policy_domain,customer_count","명","100","role_operations_reader","ACTIVE이며 기준일에 유효한 할인","true"
-"OPS_013","daily_usage_anomaly","최근 N일 개인 일사용량 z-score 이상치를 조회","비정상 급증 사용량을 점검할 때","days:integer,min_z_score:numeric,limit:integer","with m as (select max(calendar_date) d from ai_operations.v_customer_daily_usage),x as (select u.* from ai_operations.v_customer_daily_usage u cross join m where u.calendar_date between m.d-$1::integer+1 and m.d),s as (select analysis_user_key,avg(total_usage_mb) av,stddev_pop(total_usage_mb) sd from x group by analysis_user_key) select x.analysis_user_key,x.calendar_date,round(x.total_usage_mb,1) total_usage_mb,round((x.total_usage_mb-s.av)/nullif(s.sd,0),2) z_score from x join s using(analysis_user_key) where s.sd>0 and (x.total_usage_mb-s.av)/s.sd>=$2 order by z_score desc limit $3::integer","가명 고객×일자","analysis_user_key,calendar_date,total_usage_mb,z_score","MB 소수점 1자리; z-score","500","role_operations_reader","통계 탐지이며 장애 판정이 아님","true"
-"OPS_014","plan_catalog","현재 요금제 카탈로그를 조회","운영 지표와 요금제를 함께 검토할 때","limit:integer","select * from ai_operations.v_plan_catalog order by monthly_fee,plan_id limit $1::integer","요금제","plan_id,plan_name,plan_family,plan_category,monthly_fee,data_limit_gb,is_unlimited","원; GB","200","role_operations_reader","현재 마스터만 제공","true"
-"OPS_015","available_date_range","운영 사용량의 조회 가능 기간을 조회","질문에 사용할 날짜 범위를 결정할 때","","select min(calendar_date) min_date,max(calendar_date) max_date from ai_operations.v_daily_usage_segment","전체","min_date,max_date","날짜","1","role_operations_reader","최대일은 적재 워터마크 이하","true"
-"OPS_016","plan_age_benefits","요금제별 연령 혜택을 조회","연령대에 맞는 요금제 혜택 정책을 확인할 때","plan_id:text","select * from ai_operations.v_plan_age_benefits where plan_id=$1 order by min_age,age_benefit_id","요금제×연령 혜택","plan_id,plan_name,age_benefit_id,benefit_name,min_age,max_age,bonus_data_gb,bonus_shared_data_gb,bonus_voice_minutes,bonus_sms_count,bonus_video_minutes","GB; 분; 건","100","role_operations_reader","현재 마스터만 제공","true"
-"OPS_017","plan_adoption_by_age_band","연령대별 요금제 가입자 수와 연령대 내 가입 비중을 조회","연령대마다 많이 선택하는 요금제를 비교할 때","as_of_date:date","select as_of_date,age_band,plan_id,plan_name,subscriber_count,round(100.0*subscriber_count/nullif(sum(subscriber_count) over(partition by as_of_date,age_band),0),2) share_within_age_band_pct from ai_operations.v_subscriber_current where as_of_date=$1::date order by age_band,subscriber_count desc,plan_id","기준일×연령대×요금제","as_of_date,age_band,plan_id,plan_name,subscriber_count,share_within_age_band_pct","명; 백분율 소수점 2자리","500","role_operations_reader","저장된 현재 스냅샷 기준일만 조회 가능하며 과거 가입 이력·해지는 반영하지 않음; 분모가 0이면 비중은 null","true"
-"OPS_018","monthly_usage_customer_summary","월별 총사용량과 고유 이용자 수 및 이용자당 평균·중앙값을 조회","월 사용량 변화가 이용자 수 또는 이용자당 사용량 변화 때문인지 비교할 때","from_month:date,to_month:date","with customer_month as (select calendar_month,analysis_user_key,sum(total_usage_mb) total_usage_mb from ai_operations.v_customer_monthly_category_usage where calendar_month between date_trunc('month',$1::date)::date and date_trunc('month',$2::date)::date group by calendar_month,analysis_user_key) select calendar_month,round(sum(total_usage_mb)/1024.0,2) total_usage_gb,count(*) unique_usage_users,round(avg(total_usage_mb)/1024.0,2) average_usage_gb_per_user,round((percentile_cont(0.5) within group(order by total_usage_mb))::numeric/1024.0,2) median_usage_gb_per_user from customer_month group by calendar_month order by calendar_month","월","calendar_month,total_usage_gb,unique_usage_users,average_usage_gb_per_user,median_usage_gb_per_user","GB 소수점 2자리(1024 MB=1 GB); 명","120","role_operations_reader","사용량 행이 없는 고객·월은 제외; 부분 적재 월은 완전한 월과 직접 비교하지 않음; 시작월<=종료월이며 조회 범위는 최대 120개월","true"
-"OPS_019","weekday_usage_pattern","요일별 일평균 사용량과 이용자 수 및 평일·주말 구분을 조회","평일과 주말 또는 요일별 사용 패턴을 비교할 때","from_date:date,to_date:date","with daily as (select calendar_date,sum(total_usage_mb) total_usage_mb,count(distinct analysis_user_key) usage_users from ai_operations.v_customer_daily_usage where calendar_date between $1::date and $2::date group by calendar_date),classified as (select extract(isodow from calendar_date)::integer weekday,extract(isodow from calendar_date) in (6,7) is_weekend,total_usage_mb,usage_users from daily) select weekday,is_weekend,count(*) observed_days,round(avg(total_usage_mb)/1024.0,2) average_daily_usage_gb,round(avg(usage_users),1) average_daily_usage_users,round(sum(total_usage_mb)/nullif(sum(usage_users),0),1) usage_mb_per_user_day from classified group by weekday,is_weekend order by weekday","요일","weekday,is_weekend,observed_days,average_daily_usage_gb,average_daily_usage_users,usage_mb_per_user_day","월요일=1~일요일=7; 일; GB 소수점 2자리(1024 MB=1 GB); 명·MB 소수점 1자리","7","role_operations_reader","시작일<=종료일이며 최대 366일; 사용량 행이 없는 날짜는 관측 일수에서 제외하므로 적재 누락 확인 필요; 주말은 토·일이며 공휴일은 반영하지 않음; 이용자당 사용량은 이용자·일 기준","true"
-"OPS_020","top_customer_usage_concentration","월 사용량 상위 N% 고객의 전체 사용량 점유율을 조회","사용량이 일부 고사용 고객에게 집중되는 정도를 확인할 때","year_month:text,top_percent:integer","with customer_month as (select analysis_user_key,sum(total_usage_mb) total_usage_mb from ai_operations.v_customer_monthly_category_usage where calendar_month=to_date($1||'-01','YYYY-MM-DD') group by analysis_user_key),ranked as (select analysis_user_key,total_usage_mb,row_number() over(order by total_usage_mb desc,analysis_user_key) usage_rank,count(*) over() customer_count from customer_month) select to_date($1||'-01','YYYY-MM-DD') calendar_month,$2::integer top_percent,count(*) unique_usage_users,count(*) filter(where usage_rank<=ceil(customer_count*$2::numeric/100.0)) top_customer_count,round(coalesce(sum(total_usage_mb) filter(where usage_rank<=ceil(customer_count*$2::numeric/100.0)),0),1) top_usage_mb,round(coalesce(sum(total_usage_mb),0),1) total_usage_mb,round(100.0*sum(total_usage_mb) filter(where usage_rank<=ceil(customer_count*$2::numeric/100.0))/nullif(sum(total_usage_mb),0),2) top_usage_share_pct from ranked","지정 월 전체","calendar_month,top_percent,unique_usage_users,top_customer_count,top_usage_mb,total_usage_mb,top_usage_share_pct","명; MB 소수점 1자리; 백분율 소수점 2자리","1","role_operations_reader","year_month는 YYYY-MM이며 top_percent는 1~100 정수; 사용량 행이 있는 고객만 대상; 상위 인원은 올림하고 동률은 가명 키순으로 결정; 데이터 없음 또는 총사용량 0이면 점유율은 null; 부분 적재 월 주의","true"
-"OPS_021","plan_adoption_share","현재 요금제별 가입자 수와 전체 가입자 대비 점유율을 조회","어떤 요금제에 가입자가 집중되어 있는지 확인할 때","as_of_date:date","with counts as (select as_of_date,plan_id,plan_name,sum(subscriber_count) subscriber_count from ai_operations.v_subscriber_current where as_of_date=$1::date group by as_of_date,plan_id,plan_name) select as_of_date,plan_id,plan_name,subscriber_count,round(100.0*subscriber_count/nullif(sum(subscriber_count) over(partition by as_of_date),0),2) subscriber_share_pct from counts order by subscriber_count desc,plan_id","기준일×요금제","as_of_date,plan_id,plan_name,subscriber_count,subscriber_share_pct","명; 백분율 소수점 2자리","200","role_operations_reader","저장된 현재 스냅샷 기준일만 조회 가능하며 과거 가입 이력·해지는 반영하지 않음; 분모가 0이면 점유율은 null","true"
-"OPS_022","segment_category_usage_share","요금제·연령대별 월 카테고리 사용량과 세그먼트 내 사용량 비중을 조회","연령대와 요금제별 콘텐츠 이용 성향을 비교할 때","year_month:text","select calendar_month,plan_id,plan_name,age_band,content_category,round(total_usage_mb,1) total_usage_mb,usage_user_count,round(average_usage_mb,1) average_usage_mb,round(100.0*total_usage_mb/nullif(sum(total_usage_mb) over(partition by calendar_month,plan_id,age_band),0),2) category_usage_share_pct from ai_operations.v_monthly_usage_segment where calendar_month=to_date($1||'-01','YYYY-MM-DD') order by plan_id,age_band,total_usage_mb desc,content_category","월×요금제×연령대×카테고리","calendar_month,plan_id,plan_name,age_band,content_category,total_usage_mb,usage_user_count,average_usage_mb,category_usage_share_pct","MB 소수점 1자리; 명; 백분율 소수점 2자리","2000","role_operations_reader","year_month는 YYYY-MM; 현재 요금제·연령대 기준으로 과거 사용량도 분류; 평균은 해당 카테고리 월 이용자당 사용량이며 카테고리별 이용자 수 합산은 중복됨; 부분 적재 월 주의; 분모가 0이면 비중은 null","true"
-"OPS_023","family_bundle_size_summary","가족결합·인터넷 보유 상태별 가족 수와 구성원 수 및 평균 가족 규모를 조회","결합과 인터넷 보유에 따른 가족 분포 및 규모를 비교할 때","","select has_bundle,has_kt_internet,count(*) family_count,sum(member_count) member_count,round(avg(member_count),2) average_member_count from ai_operations.v_family_current group by has_bundle,has_kt_internet order by family_count desc,has_bundle,has_kt_internet","결합 여부×인터넷 보유 여부","has_bundle,has_kt_internet,family_count,member_count,average_member_count","가족; 명; 평균 명 소수점 2자리","20","role_operations_reader","저장된 현재 가족 스냅샷 기준이며 이력 비교 불가; 가족에 연결되지 않은 고객은 제외; 평균은 고객 수가 아닌 가족 수를 분모로 하며 구성원 0명인 가족도 포함","true"
-"OPS_024","daily_usage_anomaly_context","최근 N일 고객별 기간 평균 대비 증가율과 z-score를 포함한 일사용량 급증 후보를 조회","평소보다 사용량이 급증한 가명 고객과 증가 정도를 확인할 때","days:integer,min_z_score:numeric,limit:integer","with m as (select max(calendar_date) d from ai_operations.v_customer_daily_usage),x as (select u.analysis_user_key,u.calendar_date,u.total_usage_mb from ai_operations.v_customer_daily_usage u cross join m where u.calendar_date between m.d-$1::integer+1 and m.d),s as (select analysis_user_key,count(*) observed_days,avg(total_usage_mb) av,stddev_pop(total_usage_mb) sd from x group by analysis_user_key) select x.analysis_user_key,x.calendar_date,round(x.total_usage_mb,1) total_usage_mb,s.observed_days,round(s.av,1) average_daily_usage_mb,round(100.0*(x.total_usage_mb/nullif(s.av,0)-1),2) increase_pct,round((x.total_usage_mb-s.av)/nullif(s.sd,0),2) z_score from x join s using(analysis_user_key) where s.av>0 and s.sd>0 and x.total_usage_mb>s.av and (x.total_usage_mb-s.av)/s.sd>=$2::numeric order by (x.total_usage_mb-s.av)/s.sd desc,x.total_usage_mb desc,x.analysis_user_key,x.calendar_date limit $3::integer","가명 고객×일자","analysis_user_key,calendar_date,total_usage_mb,observed_days,average_daily_usage_mb,increase_pct,z_score","MB 소수점 1자리; 일; 증가율·z-score 소수점 2자리","500","role_operations_reader","최신 적재일 기준이며 days는 2~366, min_z_score는 0 이상, limit는 1~500; 평균·모집단 표준편차에 탐지 대상일도 포함; 사용량 행이 없는 날짜는 제외; 평균 또는 표준편차가 0인 고객은 제외; 통계 탐지이며 장애 판정이 아님","true"
-"OPS_025","monthly_age_category_statistics","월별 전체 연령대의 콘텐츠 카테고리 사용량과 연령대 내 사용량 비율을 통계표로 조회","2026년 9월 한 달 동안 연령 범위별 콘텐츠 사용 비율을 비교하는 통계 자료가 필요할 때","year_month:text","with aggregated as (select calendar_month,age_band,content_category,sum(total_usage_mb) total_usage_mb,sum(usage_user_count) usage_user_count from ai_operations.v_monthly_usage_segment where calendar_month=to_date($1||'-01','YYYY-MM-DD') group by calendar_month,age_band,content_category) select calendar_month,age_band,content_category,round(total_usage_mb/1024.0,2) total_usage_gb,usage_user_count,round(total_usage_mb/nullif(usage_user_count,0)/1024.0,2) average_usage_gb_per_user,round(sum(total_usage_mb) over(partition by calendar_month,age_band)/1024.0,2) age_band_total_usage_gb,round(100.0*total_usage_mb/nullif(sum(total_usage_mb) over(partition by calendar_month,age_band),0),2) category_usage_share_pct from aggregated order by substring(age_band from '^[0-9]+')::integer,total_usage_mb desc,content_category","월×연령대×카테고리","calendar_month,age_band,content_category,total_usage_gb,usage_user_count,average_usage_gb_per_user,age_band_total_usage_gb,category_usage_share_pct","GB 소수점 2자리(1024 MB=1 GB); 명; 백분율 소수점 2자리","200","role_operations_reader","year_month는 YYYY-MM; 비율은 해당 연령대의 전체 카테고리 데이터 사용량 대비 비율이며 이용자 수·시청시간 비율이 아님; 현재 연령대 8-12/13-18/19-24/25-34/35-49/50-64/65+만 지원하며 정확한 20-24세 분리 불가; 카테고리별 이용자 수 합산은 중복됨; 부분 적재 월 주의; 분모가 0이면 null; 카테고리 이용자 수는 0 사용량 행도 포함","true"
-"OPS_026","monthly_selected_age_category_statistics","월별 지정 연령대의 콘텐츠 사용량과 카테고리 구성비를 통계표로 조회","2026년 9월 19~24세 고객이 콘텐츠를 어떤 비율로 사용하는지 확인할 때","year_month:text,age_band:text","with aggregated as (select calendar_month,age_band,content_category,sum(total_usage_mb) total_usage_mb,sum(usage_user_count) usage_user_count from ai_operations.v_monthly_usage_segment where calendar_month=to_date($1||'-01','YYYY-MM-DD') and age_band=$2::text group by calendar_month,age_band,content_category) select calendar_month,age_band,content_category,round(total_usage_mb/1024.0,2) total_usage_gb,usage_user_count,round(total_usage_mb/nullif(usage_user_count,0)/1024.0,2) average_usage_gb_per_user,round(sum(total_usage_mb) over(partition by calendar_month,age_band)/1024.0,2) age_band_total_usage_gb,round(100.0*total_usage_mb/nullif(sum(total_usage_mb) over(partition by calendar_month,age_band),0),2) category_usage_share_pct from aggregated order by total_usage_mb desc,content_category","월×지정 연령대×카테고리","calendar_month,age_band,content_category,total_usage_gb,usage_user_count,average_usage_gb_per_user,age_band_total_usage_gb,category_usage_share_pct","GB 소수점 2자리(1024 MB=1 GB); 명; 백분율 소수점 2자리","100","role_operations_reader","year_month는 YYYY-MM; age_band는 8-12/13-18/19-24/25-34/35-49/50-64/65+ 중 하나; 19-24에는 19세가 포함되므로 20대 초반 또는 20-24세로 표시하지 않음; 비율은 해당 연령대 전체 데이터 사용량 대비 비율; 카테고리별 이용자 수 합산은 중복됨; 부분 적재 월 주의; 분모가 0이면 null; 카테고리 이용자 수는 0 사용량 행도 포함","true"
-"OPS_027","monthly_category_statistics","월별 전체 콘텐츠 카테고리의 사용량과 이용자 수 및 전체 사용량 비율을 통계표로 조회","한 달 동안 전체 고객의 콘텐츠별 사용량 구성과 이용자당 사용량을 비교할 때","year_month:text","with aggregated as (select calendar_month,content_category,sum(total_usage_mb) total_usage_mb,sum(usage_user_count) usage_user_count from ai_operations.v_monthly_usage_segment where calendar_month=to_date($1||'-01','YYYY-MM-DD') group by calendar_month,content_category) select calendar_month,content_category,round(total_usage_mb/1024.0,2) total_usage_gb,usage_user_count,round(total_usage_mb/nullif(usage_user_count,0)/1024.0,2) average_usage_gb_per_user,round(sum(total_usage_mb) over(partition by calendar_month)/1024.0,2) all_category_total_usage_gb,round(100.0*total_usage_mb/nullif(sum(total_usage_mb) over(partition by calendar_month),0),2) category_usage_share_pct from aggregated order by total_usage_mb desc,content_category","월×카테고리","calendar_month,content_category,total_usage_gb,usage_user_count,average_usage_gb_per_user,all_category_total_usage_gb,category_usage_share_pct","GB 소수점 2자리(1024 MB=1 GB); 명; 백분율 소수점 2자리","100","role_operations_reader","year_month는 YYYY-MM; 비율은 월 전체 데이터 사용량 대비 비율; 현재 요금제·연령대별 고객군이 서로 겹치지 않아 동일 카테고리의 이용자 수는 합산 가능하지만 카테고리 간 합산은 중복됨; 평균은 카테고리 월 이용자당 사용량; 부분 적재 월 주의; 분모가 0이면 null; 카테고리 이용자 수는 0 사용량 행도 포함","true"
-"OPS_028","monthly_plan_category_statistics","월별 요금제별 콘텐츠 사용량과 요금제 내 카테고리 비율을 통계표로 조회","요금제마다 콘텐츠 사용 구성이 어떻게 다른지 비교하는 통계 자료가 필요할 때","year_month:text","with aggregated as (select calendar_month,plan_id,plan_name,content_category,sum(total_usage_mb) total_usage_mb,sum(usage_user_count) usage_user_count from ai_operations.v_monthly_usage_segment where calendar_month=to_date($1||'-01','YYYY-MM-DD') group by calendar_month,plan_id,plan_name,content_category) select calendar_month,plan_id,plan_name,content_category,round(total_usage_mb/1024.0,2) total_usage_gb,usage_user_count,round(total_usage_mb/nullif(usage_user_count,0)/1024.0,2) average_usage_gb_per_user,round(sum(total_usage_mb) over(partition by calendar_month,plan_id)/1024.0,2) plan_total_usage_gb,round(100.0*total_usage_mb/nullif(sum(total_usage_mb) over(partition by calendar_month,plan_id),0),2) category_usage_share_pct from aggregated order by plan_id,total_usage_mb desc,content_category","월×요금제×카테고리","calendar_month,plan_id,plan_name,content_category,total_usage_gb,usage_user_count,average_usage_gb_per_user,plan_total_usage_gb,category_usage_share_pct","GB 소수점 2자리(1024 MB=1 GB); 명; 백분율 소수점 2자리","2000","role_operations_reader","year_month는 YYYY-MM; 현재 요금제로 과거 사용량도 분류하며 요금제 변경 효과 분석 불가; 비율은 해당 요금제의 전체 데이터 사용량 대비 비율; 카테고리별 이용자 수 합산은 중복됨; 평균은 카테고리 월 이용자당 사용량; 부분 적재 월 주의; 분모가 0이면 null; 카테고리 이용자 수는 0 사용량 행도 포함","true"
-"OPS_029","selected_age_category_monthly_comparison","지정 연령대의 월별 콘텐츠 사용량과 구성비 및 전월 대비 변화를 통계표로 조회","19~24세의 콘텐츠 사용 비율이 8월과 9월 사이 어떻게 변했는지 비교할 때","from_month:date,to_month:date,age_band:text","with aggregated as (select calendar_month,age_band,content_category,sum(total_usage_mb) total_usage_mb,sum(usage_user_count) usage_user_count from ai_operations.v_monthly_usage_segment where calendar_month between (date_trunc('month',$1::date)-interval '1 month')::date and date_trunc('month',$2::date)::date and age_band=$3::text group by calendar_month,age_band,content_category),calculated as (select calendar_month,age_band,content_category,total_usage_mb,usage_user_count,100.0*total_usage_mb/nullif(sum(total_usage_mb) over(partition by calendar_month,age_band),0) usage_share_pct from aggregated) select c.calendar_month,c.age_band,c.content_category,round(c.total_usage_mb/1024.0,2) total_usage_gb,c.usage_user_count,round(c.total_usage_mb/nullif(c.usage_user_count,0)/1024.0,2) average_usage_gb_per_user,round(c.usage_share_pct,2) category_usage_share_pct,round(p.total_usage_mb/1024.0,2) previous_month_usage_gb,round(p.usage_share_pct,2) previous_month_share_pct,round(100.0*(c.total_usage_mb/nullif(p.total_usage_mb,0)-1),2) usage_change_pct,round(c.usage_share_pct-p.usage_share_pct,2) share_change_pp from calculated c left join calculated p on p.calendar_month=(c.calendar_month-interval '1 month')::date and p.age_band=c.age_band and p.content_category=c.content_category where c.calendar_month>=date_trunc('month',$1::date)::date order by c.calendar_month,c.total_usage_mb desc,c.content_category","월×지정 연령대×카테고리","calendar_month,age_band,content_category,total_usage_gb,usage_user_count,average_usage_gb_per_user,category_usage_share_pct,previous_month_usage_gb,previous_month_share_pct,usage_change_pct,share_change_pp","GB 소수점 2자리(1024 MB=1 GB); 명; 백분율·증감률·퍼센트포인트 소수점 2자리","2000","role_operations_reader","age_band는 8-12/13-18/19-24/25-34/35-49/50-64/65+ 중 하나이며 정확한 20-24세 분리 불가; 시작월<=종료월이며 최대 120개월; 전월은 직전 달력 월이고 조회 시작월의 전월도 비교 입력으로 조회; 전월 카테고리 행이 없으면 비교값은 null이며 전월 사용량 0이면 증감률은 null; 카테고리 행이 없는 월은 출력하지 않음; 현재 연령대 기준; 부분 적재 월 주의; 카테고리 이용자 수는 0 사용량 행도 포함","true"
-"OPS_030","monthly_category_usage_distribution","월별 카테고리 이용자 사용량의 평균·중앙값·90백분위·최댓값을 통계표로 조회","9월 영상 또는 음악 데이터 사용량이 고객별로 얼마나 차이 나는지 분포 통계가 필요할 때","year_month:text","select calendar_month,content_category,count(*) usage_user_count,round(sum(total_usage_mb)/1024.0,2) total_usage_gb,round(avg(total_usage_mb)/1024.0,2) average_usage_gb_per_user,round((percentile_cont(0.5) within group(order by total_usage_mb))::numeric/1024.0,2) median_usage_gb_per_user,round((percentile_cont(0.9) within group(order by total_usage_mb))::numeric/1024.0,2) p90_usage_gb_per_user,round(max(total_usage_mb)/1024.0,2) max_usage_gb_per_user from ai_operations.v_customer_monthly_category_usage where calendar_month=to_date($1||'-01','YYYY-MM-DD') group by calendar_month,content_category order by sum(total_usage_mb) desc,content_category","월×카테고리","calendar_month,content_category,usage_user_count,total_usage_gb,average_usage_gb_per_user,median_usage_gb_per_user,p90_usage_gb_per_user,max_usage_gb_per_user","GB 소수점 2자리(1024 MB=1 GB); 명","100","role_operations_reader","year_month는 YYYY-MM; 해당 카테고리 사용량 행이 있는 고객만 대상이며 0 사용량 행도 포함; 각 카테고리 통계를 따로 계산하므로 카테고리 간 이용자 수 합산은 중복됨; 90백분위는 연속 보간값; 연령대별 분포는 이 뷰만으로 계산 불가; 부분 적재 월 주의","true"
+"query_id","query_name","parameters","fixed_sql","output","data_sources","return_grain","db_role","limitations"
+"OPS_ANALYSIS_001","연령대별 가입 요금제 구성","[{""position"":1,""name"":""as_of_date"",""type"":""date"",""required"":true,""description"":""가입자 뷰의 배치 기준일. 현재 스냅샷에 존재하는 기준일을 지정한다."",""example"":""2025-09-30""}]","select
+    as_of_date,
+    age_band,
+    plan_id,
+    plan_name,
+    subscriber_count::bigint as subscriber_count,
+    round(
+        subscriber_count * 100.0
+        / nullif(sum(subscriber_count) over (partition by age_band), 0),
+        2
+    ) as age_band_share_pct
+from ai_operations.v_subscriber_current
+where as_of_date = $1::date
+order by
+    array_position(
+        array['8-12', '13-18', '19-24', '25-34', '35-49', '50-64', '65+'],
+        age_band
+    ),
+    subscriber_count desc,
+    plan_id;","[{""name"":""as_of_date"",""type"":""date"",""unit"":""일자"",""description"":""가입자 집계의 배치 기준일""},{""name"":""age_band"",""type"":""text"",""unit"":"""",""description"":""가입자 연령 구간""},{""name"":""plan_id"",""type"":""text"",""unit"":"""",""description"":""요금제 식별자""},{""name"":""plan_name"",""type"":""text"",""unit"":"""",""description"":""표시용 요금제 이름""},{""name"":""subscriber_count"",""type"":""bigint"",""unit"":""명"",""description"":""기준일의 해당 연령대·요금제 가입자 수""},{""name"":""age_band_share_pct"",""type"":""numeric"",""unit"":""%"",""description"":""해당 연령대 전체 가입자 중 해당 요금제 가입자 비율""}]","[""ai_operations.v_subscriber_current""]","기준일×연령대×요금제","role_operations_reader","현재 가입자 스냅샷이다. 가입일이 기준일 이하인 고객을 집계하며 취소와 요금제 변경 이력은 고려하지 않는다. 비중의 분모는 같은 연령대의 전체 가입자이다. 기준일에 해당하는 스냅샷이 없으면 결과 행이 없다."
+"OPS_ANALYSIS_002","월별 고객 사용량 평균·중앙값","[{""position"":1,""name"":""start_date"",""type"":""date"",""required"":true,""description"":""조회 시작월의 첫날. 포함. end_date_exclusive보다 앞선 날짜여야 한다."",""example"":""2025-01-01""},{""position"":2,""name"":""end_date_exclusive"",""type"":""date"",""required"":true,""description"":""조회 종료 경계 월의 첫날. 제외. 1년 조회는 start_date에서 1년 뒤의 날짜를 지정한다."",""example"":""2026-01-01""}]","with months as (
+    select month_start::date as calendar_month
+    from generate_series(
+        $1::date::timestamp,
+        ($2::date - interval '1 month')::timestamp,
+        interval '1 month'
+    ) as m(month_start)
+),
+customer_month as (
+    select
+        calendar_month,
+        analysis_user_key,
+        total_usage_mb / 1024.0 as monthly_usage_gb
+    from ai_operations.v_customer_monthly_usage_filtered_preagg
+    where month_key >= (
+        extract(year from $1::date)::integer * 10000
+        + extract(month from $1::date)::integer * 100 + 1
+    )
+      and month_key < (
+        extract(year from $2::date)::integer * 10000
+        + extract(month from $2::date)::integer * 100 + 1
+    )
+),
+monthly_stats as (
+    select
+        calendar_month,
+        count(*) as recorded_customer_count,
+        avg(monthly_usage_gb) as average_monthly_usage_gb,
+        percentile_cont(0.5) within group (
+            order by monthly_usage_gb
+        ) as median_monthly_usage_gb
+    from customer_month
+    group by calendar_month
+)
+select
+    m.calendar_month,
+    coalesce(s.recorded_customer_count, 0)::bigint as recorded_customer_count,
+    round(s.average_monthly_usage_gb, 2) as average_monthly_usage_gb,
+    round(s.median_monthly_usage_gb::numeric, 2) as median_monthly_usage_gb
+from months m
+left join monthly_stats s using (calendar_month)
+order by m.calendar_month;","[{""name"":""calendar_month"",""type"":""date"",""unit"":""월"",""description"":""사용량 집계 월의 첫날""},{""name"":""recorded_customer_count"",""type"":""bigint"",""unit"":""명"",""description"":""해당 월 사용량 기록이 있는 고유 고객 수""},{""name"":""average_monthly_usage_gb"",""type"":""numeric"",""unit"":""GB/명/월"",""description"":""고객별 월 총사용량의 산술 평균""},{""name"":""median_monthly_usage_gb"",""type"":""numeric"",""unit"":""GB/명/월"",""description"":""고객별 월 총사용량의 연속형 중앙값""}]","[""ai_operations.v_customer_monthly_usage_filtered_preagg""]","월","role_operations_reader","날짜는 월의 첫날이며 시작 포함·종료 제외이다. 1년 범위 입력 시 12개월을 반환한다. 고객별 월 카테고리 사용량을 숫자 키로 먼저 합산한 집계 뷰를 사용하고 month_key로 기간을 제한한다. 0 값의 기록도 포함하고 기록 없는 고객을 0으로 추가하지 않는다. 기록 없는 월은 고객 수 0, 평균·중앙값 null이다. 월별 평균·중앙값을 단순 평균하여 기간 전체 통계로 해석하지 않는다. 표시용 GB는 MB/1024이며 소수 둘째 자리까지 반올림한다."
+"OPS_ANALYSIS_003","요금제별 평균사용량·기본 제공량 비교","[{""position"":1,""name"":""start_date"",""type"":""date"",""required"":true,""description"":""조회 시작월의 첫날. 포함. end_date_exclusive보다 앞선 날짜여야 한다."",""example"":""2025-01-01""},{""position"":2,""name"":""end_date_exclusive"",""type"":""date"",""required"":true,""description"":""조회 종료 경계 월의 첫날. 제외. 1년 조회는 start_date에서 1년 뒤의 날짜를 지정한다."",""example"":""2026-01-01""},{""position"":3,""name"":""as_of_date"",""type"":""date"",""required"":true,""description"":""조회 기간 전체에 공통으로 적용할 가입자 배치 기준일. 가입자 뷰의 현재 스냅샷 기준일을 지정한다."",""example"":""2025-09-30""}]","with months as (
+    select month_start::date as calendar_month
+    from generate_series(
+        $1::date::timestamp,
+        ($2::date - interval '1 month')::timestamp,
+        interval '1 month'
+    ) as m(month_start)
+),
+subscribers as (
+    select
+        plan_id,
+        sum(subscriber_count)::bigint as subscriber_count
+    from ai_operations.v_subscriber_current
+    where as_of_date = $3::date
+    group by plan_id
+),
+monthly_usage as (
+    select
+        calendar_month,
+        plan_id,
+        sum(total_usage_mb) / 1024.0 as total_usage_gb
+    from ai_operations.v_monthly_usage_segment
+    where calendar_month >= $1::date
+      and calendar_month < $2::date
+    group by calendar_month, plan_id
+)
+select
+    m.calendar_month,
+    $3::date as as_of_date,
+    p.plan_id,
+    p.plan_name,
+    s.subscriber_count,
+    round(u.total_usage_gb, 2) as total_usage_gb,
+    round(
+        u.total_usage_gb / nullif(s.subscriber_count, 0),
+        2
+    ) as average_usage_per_subscriber_gb,
+    p.data_limit_gb,
+    p.is_unlimited,
+    case
+        when not p.is_unlimited and p.data_limit_gb > 0 then
+            round(
+                u.total_usage_gb
+                / nullif(s.subscriber_count, 0)
+                / p.data_limit_gb * 100.0,
+                2
+            )
+    end as base_allowance_usage_pct
+from months m
+cross join subscribers s
+join dw_operations.plans p on p.plan_id = s.plan_id
+left join monthly_usage u
+    on u.calendar_month = m.calendar_month
+   and u.plan_id = s.plan_id
+order by m.calendar_month, p.monthly_fee, p.plan_id;","[{""name"":""calendar_month"",""type"":""date"",""unit"":""월"",""description"":""사용량 집계 월의 첫날""},{""name"":""as_of_date"",""type"":""date"",""unit"":""일자"",""description"":""평균의 분모로 사용하는 가입자 배치 기준일""},{""name"":""plan_id"",""type"":""text"",""unit"":"""",""description"":""요금제 식별자""},{""name"":""plan_name"",""type"":""text"",""unit"":"""",""description"":""표시용 요금제 이름""},{""name"":""subscriber_count"",""type"":""bigint"",""unit"":""명"",""description"":""기준일의 해당 요금제 전체 연령대 가입자 수""},{""name"":""total_usage_gb"",""type"":""numeric"",""unit"":""GB"",""description"":""해당 월 요금제 전체 연령대·카테고리 총사용량""},{""name"":""average_usage_per_subscriber_gb"",""type"":""numeric"",""unit"":""GB/명/월"",""description"":""해당 월 요금제 총사용량을 기준일 가입자 수로 나눈 값""},{""name"":""data_limit_gb"",""type"":""numeric"",""unit"":""GB/월"",""description"":""현재 요금제 마스터의 기본 데이터 제공량""},{""name"":""is_unlimited"",""type"":""boolean"",""unit"":"""",""description"":""무제한 데이터 요금제 여부""},{""name"":""base_allowance_usage_pct"",""type"":""numeric"",""unit"":""%"",""description"":""가입자당 평균사용량의 기본 제공량 대비 비율. 무제한 또는 유효한 제공량이 없으면 null""}]","[""ai_operations.v_monthly_usage_segment"",""ai_operations.v_subscriber_current"",""dw_operations.plans""]","월×가입자 기준일×요금제","role_operations_reader","날짜 범위는 월의 첫날이며 시작 포함·종료 제외이다. 요금제별 월 총사용량을 지정 기준일 가입자 수로 나누며 월 고유 사용 고객당 평균이 아니다. 현재 요금제로 분류된 사용량과 현재 상품 마스터를 사용한다. 조회 기간 전체에 동일 가입자 스냅샷을 적용하므로 과거 월 실제 가입자당 평균으로 해석하지 않는다. 가입자 수를 조회 기간의 월마다 합산하지 않는다. 추가 연령·공유 데이터 혜택은 기본 제공량에 포함하지 않는다. 무제한은 is_unlimited로 판단한다. 제공량 대비 비율은 실제 한도 초과 고객 비율이 아니다. 월 사용량 행이 없으면 사용량·평균·비율은 null이다. 기준일 가입자 스냅샷이 없으면 결과 행이 없다. 표시용 GB는 MB/1024이다."
+"OPS_ANALYSIS_004","요금제·연령대별 콘텐츠 사용량","[{""position"":1,""name"":""start_date"",""type"":""date"",""required"":true,""description"":""조회 시작월의 첫날. 포함. end_date_exclusive보다 앞선 날짜여야 한다."",""example"":""2025-01-01""},{""position"":2,""name"":""end_date_exclusive"",""type"":""date"",""required"":true,""description"":""조회 종료 경계 월의 첫날. 제외. 1년 조회는 start_date에서 1년 뒤의 날짜를 지정한다."",""example"":""2026-01-01""}]","select
+    calendar_month,
+    plan_id,
+    plan_name,
+    age_band,
+    content_category,
+    total_usage_mb / 1024.0 as total_usage_gb,
+    round(
+        total_usage_mb * 100.0
+        / nullif(
+            sum(total_usage_mb) over (
+                partition by calendar_month, plan_id, age_band
+            ),
+            0
+        ),
+        2
+    ) as category_usage_share_pct
+from ai_operations.v_monthly_usage_segment
+where calendar_month >= $1::date
+  and calendar_month < $2::date
+order by
+    calendar_month,
+    plan_id,
+    array_position(
+        array['8-12', '13-18', '19-24', '25-34', '35-49', '50-64', '65+'],
+        age_band
+    ),
+    total_usage_mb desc,
+    content_category;","[{""name"":""calendar_month"",""type"":""date"",""unit"":""월"",""description"":""사용량 집계 월의 첫날""},{""name"":""plan_id"",""type"":""text"",""unit"":"""",""description"":""프론트 필터·집계에 사용하는 요금제 식별자""},{""name"":""plan_name"",""type"":""text"",""unit"":"""",""description"":""표시용 요금제 이름""},{""name"":""age_band"",""type"":""text"",""unit"":"""",""description"":""프론트 필터·집계에 사용하는 연령 구간""},{""name"":""content_category"",""type"":""text"",""unit"":"""",""description"":""콘텐츠 대분류""},{""name"":""total_usage_gb"",""type"":""numeric"",""unit"":""GB"",""description"":""해당 월·요금제·연령대·카테고리 총사용량. 프론트 재집계를 위해 반올림하지 않는다""},{""name"":""category_usage_share_pct"",""type"":""numeric"",""unit"":""%"",""description"":""같은 월·요금제·연령대 안의 카테고리 사용량 비중. 프론트 재집계 시 다시 계산한다""}]","[""ai_operations.v_monthly_usage_segment""]","월×요금제×연령대×콘텐츠 카테고리","role_operations_reader","날짜는 월의 첫날이며 시작 포함·종료 제외이다. 선택 기간 전체 요금제·연령대를 반환하고 프론트에서 필터링한다. 기간 변경 시 재조회하며 요금제·연령 선택만 변경하면 받은 데이터를 재사용한다. 요금제별 그래프는 연령대를, 연령대별 그래프는 요금제를 합산한다. 여러 월은 프론트에서 월별 비교 또는 기간 합산한다. category_usage_share_pct는 원래 월×요금제×연령대 안의 비중이므로 필터·집계 후 total_usage_gb를 기준으로 다시 계산한다. 비율의 합산·단순 평균은 사용하지 않는다. 사용량은 현재 요금제 기준이다. 존재하지 않는 월·고객군·카테고리 행을 0으로 추가하지 않는다. MB/1024 변환 사용량은 프론트 재집계를 위해 반올림하지 않는다."
+"OPS_ANALYSIS_005","월별 고객 사용량 분포·집중도","[{""position"":1,""name"":""start_date"",""type"":""date"",""required"":true,""description"":""조회 시작월의 첫날. 포함. end_date_exclusive보다 앞선 날짜여야 한다."",""example"":""2025-01-01""},{""position"":2,""name"":""end_date_exclusive"",""type"":""date"",""required"":true,""description"":""조회 종료 경계 월의 첫날. 제외. 1년 조회는 start_date에서 1년 뒤의 날짜를 지정한다."",""example"":""2026-01-01""}]","with months as (
+    select month_start::date as calendar_month
+    from generate_series(
+        $1::date::timestamp,
+        ($2::date - interval '1 month')::timestamp,
+        interval '1 month'
+    ) as m(month_start)
+),
+customer_month as (
+    select
+        calendar_month,
+        analysis_user_key,
+        total_usage_mb / 1024.0 as monthly_usage_gb
+    from ai_operations.v_customer_monthly_usage_filtered_preagg
+    where month_key >= (
+        extract(year from $1::date)::integer * 10000
+        + extract(month from $1::date)::integer * 100 + 1
+    )
+      and month_key < (
+        extract(year from $2::date)::integer * 10000
+        + extract(month from $2::date)::integer * 100 + 1
+    )
+),
+ranked as (
+    select
+        calendar_month,
+        analysis_user_key,
+        monthly_usage_gb,
+        row_number() over (
+            partition by calendar_month
+            order by monthly_usage_gb desc, analysis_user_key
+        ) as usage_rank,
+        count(*) over (
+            partition by calendar_month
+        ) as total_customer_count
+    from customer_month
+),
+buckets(bucket_no, group_label, lower_gb, upper_gb) as (
+    values
+        (1, '0_to_1_gb', 0::numeric, 1::numeric),
+        (2, '1_to_5_gb', 1::numeric, 5::numeric),
+        (3, '5_to_10_gb', 5::numeric, 10::numeric),
+        (4, '10_to_30_gb', 10::numeric, 30::numeric),
+        (5, '30_to_100_gb', 30::numeric, 100::numeric),
+        (6, '100_gb_or_more', 100::numeric, null::numeric)
+),
+distribution as (
+    select
+        m.calendar_month,
+        'distribution'::text as result_type,
+        b.group_label,
+        b.bucket_no as sort_order,
+        count(c.analysis_user_key)::bigint as customer_count,
+        coalesce(sum(c.monthly_usage_gb), 0) as total_usage_gb
+    from months m
+    cross join buckets b
+    left join customer_month c
+        on c.calendar_month = m.calendar_month
+       and c.monthly_usage_gb >= b.lower_gb
+       and (b.upper_gb is null or c.monthly_usage_gb < b.upper_gb)
+    group by m.calendar_month, b.group_label, b.bucket_no
+),
+concentration as (
+    select
+        m.calendar_month,
+        'concentration'::text as result_type,
+        format('top_%s_pct', (t.ratio * 100)::integer) as group_label,
+        100 + (t.ratio * 100)::integer as sort_order,
+        count(r.analysis_user_key)::bigint as customer_count,
+        coalesce(sum(r.monthly_usage_gb), 0) as total_usage_gb
+    from months m
+    cross join unnest(array[0.01, 0.10]::numeric[]) as t(ratio)
+    left join ranked r
+        on r.calendar_month = m.calendar_month
+       and r.usage_rank <= ceil(r.total_customer_count * t.ratio)
+    group by m.calendar_month, t.ratio
+),
+grouped as (
+    select * from distribution
+    union all
+    select * from concentration
+),
+totals as (
+    select
+        calendar_month,
+        count(*)::bigint as customer_count,
+        sum(monthly_usage_gb) as total_usage_gb
+    from customer_month
+    group by calendar_month
+)
+select
+    g.calendar_month,
+    g.result_type,
+    g.group_label,
+    g.customer_count,
+    round(
+        g.customer_count * 100.0 / nullif(t.customer_count, 0),
+        2
+    ) as customer_share_pct,
+    round(g.total_usage_gb, 2) as total_usage_gb,
+    round(
+        g.total_usage_gb * 100.0 / nullif(t.total_usage_gb, 0),
+        2
+    ) as usage_share_pct
+from grouped g
+left join totals t using (calendar_month)
+order by g.calendar_month, g.sort_order;","[{""name"":""calendar_month"",""type"":""date"",""unit"":""월"",""description"":""고객별 사용량 분포·집중도를 독립 계산한 월의 첫날""},{""name"":""result_type"",""type"":""text"",""unit"":"""",""description"":""distribution은 서로 겹치지 않는 사용량 구간, concentration은 상위 누적 고객군""},{""name"":""group_label"",""type"":""text"",""unit"":"""",""description"":""0_to_1_gb, 1_to_5_gb, 5_to_10_gb, 10_to_30_gb, 30_to_100_gb, 100_gb_or_more, top_1_pct, top_10_pct""},{""name"":""customer_count"",""type"":""bigint"",""unit"":""명"",""description"":""해당 월의 사용량 구간 또는 상위 고객군에 속한 고객 수""},{""name"":""customer_share_pct"",""type"":""numeric"",""unit"":""%"",""description"":""해당 월 전체 기록 고객 중 해당 그룹 고객의 비율. 기록 고객이 없으면 null""},{""name"":""total_usage_gb"",""type"":""numeric"",""unit"":""GB"",""description"":""해당 월의 그룹 총사용량. 해당 그룹 기록이 없으면 0""},{""name"":""usage_share_pct"",""type"":""numeric"",""unit"":""%"",""description"":""해당 월 전체 사용량 중 그룹 사용량 비율. 전체 사용량이 없거나 0이면 null""}]","[""ai_operations.v_customer_monthly_usage_filtered_preagg""]","월×결과 유형×사용량 구간 또는 상위 고객군","role_operations_reader","날짜는 월의 첫날이며 시작 포함·종료 제외이다. 각 월에 6개 분포 구간과 2개 집중도 행을 반환한다. 고객별 월 카테고리 사용량을 숫자 키로 먼저 합산한 집계 뷰를 사용하고 month_key로 기간을 제한하며 기록 없는 고객을 0으로 추가하지 않는다. 분포 구간은 하한 포함·상한 제외이고 100GB 이상은 상한이 없다. 상위 1%·10%의 인원은 올림하며 동률은 가명 고객 키로 정렬한다. 올림으로 실제 고객 비중은 1%·10%와 다를 수 있다. 상위 1%는 상위 10%에 포함되므로 집중도 행을 합산하지 않는다. 각 월의 고객별 순위를 독립 계산한다. 기록 없는 월은 고객 수·사용량 0, 비중 null이다. 전체 사용량이 0이면 사용량 비중은 null이다. 표시용 GB는 MB/1024이며 순위·구간·비중을 계산한 뒤 반올림한다."
+"OPS_ANALYSIS_006","가족 결합·인터넷 보유 조합","[]","with combinations(has_bundle, has_kt_internet) as (
+    values
+        (false, false),
+        (false, true),
+        (true, false),
+        (true, true)
+),
+family_counts as (
+    select
+        has_bundle,
+        has_kt_internet,
+        count(*)::bigint as family_count
+    from ai_operations.v_family_current
+    group by has_bundle, has_kt_internet
+)
+select
+    c.has_bundle,
+    c.has_kt_internet,
+    coalesce(f.family_count, 0)::bigint as family_count,
+    round(
+        coalesce(f.family_count, 0) * 100.0
+        / nullif(sum(coalesce(f.family_count, 0)) over (), 0),
+        2
+    ) as family_share_pct
+from combinations c
+left join family_counts f
+    on f.has_bundle = c.has_bundle
+   and f.has_kt_internet = c.has_kt_internet
+order by c.has_bundle, c.has_kt_internet;","[{""name"":""has_bundle"",""type"":""boolean"",""unit"":"""",""description"":""현재 가족의 결합 가입 여부""},{""name"":""has_kt_internet"",""type"":""boolean"",""unit"":"""",""description"":""현재 가족의 KT 인터넷 보유 여부""},{""name"":""family_count"",""type"":""bigint"",""unit"":""가족"",""description"":""해당 상태 조합의 가족 수""},{""name"":""family_share_pct"",""type"":""numeric"",""unit"":""%"",""description"":""현재 전체 가족 중 해당 상태 조합 가족의 비율. 전체 가족이 없으면 null""}]","[""ai_operations.v_family_current""]","결합 여부×KT 인터넷 보유 여부","role_operations_reader","날짜 컬럼이 없는 현재 가족 스냅샷이며 기간 조회는 지원하지 않는다. 4가지 조합을 반환하며 없는 조합의 가족 수는 0이다. 전체 가족이 없으면 비중은 null이다. 집계 단위는 고객·회선이 아닌 가족이다. 인터넷 보유·미결합은 검토 대상 규모이며 할인 자격 충족을 의미하지 않는다. 개별 구성원과 결합 유형은 제공하지 않는다."
