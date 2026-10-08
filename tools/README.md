@@ -9,6 +9,8 @@
 | `verification/verify_loaded_data.psql` | 증분 파이프라인 성공 여부 확인 | DB 실행 이력·워터마크·품질 결과와 선택적 사용량 총합 보고서 |
 | `customer-selection/*.sql` | 추천 사례 고객 선정 | 고객 현재 상태·최근 사용량·정책에서 최대 10명의 고객 조회 |
 | [`customer-selection/select_example_customers.psql`](customer-selection/select_example_customers.psql) | 다섯 고객 선정 사례를 순서대로 실행 | 동일한 읽기 전용 스냅샷에서 사례별 최대 10명의 고객 조회 |
+| [`query-plans/compare_operations_reader_preagg.psql`](query-plans/README.md) | 운영 002·005 원래·최종 SQL 성능 비교 | 네 기간을 워밍업 후 교대로 5회 측정해 실행시간 요약 |
+| [`query-plans/explain_operations_preagg.psql`](query-plans/explain_operations_preagg.psql) | 운영 002·005 상세 실행계획 확인 | 같은 기간의 원래·최종 네 계획 출력. 실제 실행·계획만 확인하는 모드 지원 |
 
 아래 명령은 연결된 psql에서 실행합니다. 고객 선정 SQL은 DB가 연결된 SQL 편집기에서도 실행할 수 있습니다. 실제 연결 문자열과 키는 파일에 기록하지 않습니다.
 
@@ -152,7 +154,10 @@ rollback;
 - 사례 1~3은 최신 적재일을 종료일로 하는 최근 30일을 사용합니다. 30일 모두 관측된 고객만 포함하며, 사용량이 없는 날짜는 0으로 보충하지 않습니다.
 - 사용량은 MB 합계를 1024로 나눈 GB입니다. YouTube 사용량은 시청시간이 아니라 `youtube_video`, `youtube_shorts`, `youtube_music`의 데이터 사용량입니다.
 - 요금은 할인 전 월정액입니다. 현재 요금제·서비스·할인 상태를 조회하며 과거 상태를 재현하지 않습니다.
-- 사례 1~3은 `ai_personalization` 조회 권한이 필요합니다. 사례 4-A와 4-B는 추가로 `dw_personalization` 조회 권한이 필요하며, 기본 `n8n_personalization` 역할에는 DW 직접 조회 권한이 없습니다.
+- 사례 1~3은 `ai_personalization` 조회 권한이 필요합니다. 사례 4-A와 4-B는 공개 마스터 외에
+  `dw_personalization.users`와 `dw_personalization.families`도 직접 조회합니다.
+  `080` 적용 후에도 기본 `n8n_personalization` 역할에는 두 고객·가족 원본 테이블의 조회 권한이
+  없으므로, 사례 4-A와 4-B는 필요한 원본 조회 권한을 가진 별도 분석 계정으로 실행합니다.
 - 사례 4의 정책 유효기간은 실행일(`current_date`) 기준입니다. 과거 정책을 검토할 때는 해당 표현식을 명시적인 기준일로 변경합니다.
 - 가족 사례의 `limit 10`은 가족 10개가 아니라 고객 10명입니다. 같은 가족의 고객이 여러 행에 나올 수 있습니다.
 - 이 문서는 수동 예시 선정용이며 [n8n 고정 쿼리 계약](../docs/integration/n8n-fixed-query-contract.md)의 등록 카탈로그에 추가된 쿼리는 아닙니다.
@@ -268,3 +273,5 @@ YouTube 구독 여부는 이 데이터로 판단하지 않습니다.
 - [개인화 DW 스키마](../db/schema/030_dw_personalization.sql)
 - [원본 데이터 스키마와 할인 계산 기준](../docs/data/raw-data-schema.md)
 - [합성 데이터 생성기](../generator/src/kt_synthetic_data_generator.py)
+
+운영 월별 쿼리의 최적화 원인과 측정 결과는 [이슈 기록](../docs/issues/operations-query-optimization.md)에 정리했습니다.

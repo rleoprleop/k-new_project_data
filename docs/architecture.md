@@ -53,6 +53,15 @@ Star Schema는 조인 경로와 grain을 고정해 쿼리를 단순하게 만들
 줄입니다. 속도는 Star라는 이름 자체보다 정확한 grain, 인덱스, 일/월 사전 집계에서 나옵니다.
 대용량 상세 행은 DW에 한 번만 저장하고 DM 상세 Fact는 View로 연결합니다.
 
+운영 002·005는 `ai_operations.v_customer_monthly_usage_filtered_preagg`를 통해
+월 키 기간 필터 → 숫자 고객·월 합산 → 고객·날짜 차원 조인 순서로 조회합니다.
+기초 fact는 고객·월·카테고리 단위이고 이 뷰는 고객·월 단위입니다.
+일반 뷰여서 별도 저장·갱신 없이 현재 DM을 조회 때 계산합니다.
+[130 마이그레이션](../db/schema/130_install_operations_monthly_preagg_view.sql)은
+전체·초기화·증분/정정 파이프라인의 스키마 구성에 포함됩니다.
+Lambda도 같은 SQL을 사용하므로 새 DB에 뷰·운영 조회 권한을 구성합니다.
+기존 DB에는 데이터 재적재 없이 직접 적용할 수도 있습니다. 적재·정정 로직은 그대로 사용합니다.
+
 ## 이름 처리
 
 `dm_personalization.dim_customer`와 개인화 AI View에 `user_id`, `name`을 함께 둡니다. 따라서
@@ -67,9 +76,13 @@ Star Schema는 조인 경로와 grain을 고정해 쿼리를 단순하게 만들
 
 ## 계정과 공개 RDS
 
-- `n8n_operations`: `ai_operations` View만 SELECT
-- `n8n_personalization`: `ai_personalization` View만 SELECT
-- 두 계정 모두 DW/DM 기본 테이블과 쓰기 권한 없음
+- `n8n_operations`: `ai_operations` View와 `dw_operations` 공개 마스터 8개 SELECT
+- `n8n_personalization`: `ai_personalization` View와 `dw_personalization` 공개 마스터 8개 SELECT
+- 공개 마스터: `plans`, `age_benefits`, `plan_age_benefits`, `additional_services`,
+  `plan_benefits`, `discounts`, `internet_bundle_discount_rules`, `premium_family_discount_rules`
+- 고객·가족·사용량 DW와 DM 기본 객체의 직접 조회 및 DW/DM 쓰기 권한 없음
+- 공개 마스터 권한은 [080 마이그레이션](../db/schema/080_grant_public_master_read.sql)으로
+  각 조회 역할에 부여하며, 새 테이블에 자동으로 확대하지 않음
 - 비밀번호는 n8n credential 또는 비밀 관리 도구에서 설정하고 저장소에 기록하지 않음
 - RDS Security Group의 5432 인바운드는 n8n 고정 공인 IP `/32`만 허용
 - `0.0.0.0/0` 금지, TLS 사용, 관리자 계정을 n8n에 사용하지 않음

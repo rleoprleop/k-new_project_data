@@ -6,6 +6,8 @@
 \ir ../../db/schema/050_dm_personalization.sql
 \ir ../../db/schema/060_ai_views_roles.sql
 \ir ../../db/schema/070_allow_open_ended_age_benefits.sql
+\ir ../../db/schema/080_grant_public_master_read.sql
+\ir ../../db/schema/130_install_operations_monthly_preagg_view.sql
 
 select pg_advisory_lock(hashtextextended('content_usage_daily',0));
 select audit.start_pipeline_run(:'source_set_checksum',:'reference_date'::date) as batch_id \gset
@@ -57,6 +59,7 @@ truncate table
 \ir ../../db/quality/personalization/dw/010_quality.sql
 \ir ../../db/quality/operations/dm/010_quality.sql
 \ir ../../db/quality/personalization/dm/010_quality.sql
+\ir ../../db/quality/030_reader_permissions.sql
 
 update audit.pipeline_run set status='SUCCEEDED',ended_at=clock_timestamp(),error_message=null
 where batch_id=:'batch_id'::uuid;
